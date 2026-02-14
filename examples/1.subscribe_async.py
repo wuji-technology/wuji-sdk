@@ -3,13 +3,14 @@
 Async subscription example.
 
 Auto-detect and connect to Wuji Gloves, subscribe to data streams
-(tactile, tactile_zones, emf_poses) using async/await with recv_async().
+(tactile, tactile_zones, emf_poses, hand_joint_angles, hand_skeleton,
+tactile_point_cloud) using async/await with recv_async().
 
 Usage: python 1.subscribe_async.py
 """
 
 import asyncio
-from wuji_sdk import SdkManager, WujiGlove, TactileFrame, TactileZones, EmfPoseArray
+from wuji_sdk import SdkManager, WujiGlove, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
 
 
 async def print_tactile(glove: WujiGlove):
@@ -39,6 +40,30 @@ async def print_emf_poses(glove: WujiGlove):
             print(f"[{glove.device_name}][EmfPoses] thumb=[{pos[0]:+.3f}, {pos[1]:+.3f}, {pos[2]:+.3f}]")
 
 
+async def print_hand_joint_angles(glove: WujiGlove):
+    sub = glove.hand_joint_angles().subscribe()
+    while True:
+        angles: HandJointAngles = await sub.recv_async()
+        confs = [f.confidence for f in angles.fingers]
+        print(f"[{glove.device_name}][JointAngles] conf={[f'{c:.2f}' for c in confs]}")
+
+
+async def print_hand_skeleton(glove: WujiGlove):
+    sub = glove.hand_skeleton().subscribe()
+    while True:
+        skeleton: HandSkeleton = await sub.recv_async()
+        wrist = skeleton.joints[0]
+        pos = wrist.pose.position
+        print(f"[{glove.device_name}][Skeleton] wrist=[{pos[0]:+.3f}, {pos[1]:+.3f}, {pos[2]:+.3f}] joints={len(skeleton.joints)}")
+
+
+async def print_tactile_point_cloud(glove: WujiGlove):
+    sub = glove.tactile_point_cloud().subscribe()
+    while True:
+        cloud: PointCloud = await sub.recv_async()
+        print(f"[{glove.device_name}][PointCloud] points={cloud.point_count()} frame={cloud.frame_id}")
+
+
 async def main():
     manager = SdkManager.instance()
     devices = manager.scan()
@@ -59,6 +84,9 @@ async def main():
             print_tactile(glove),
             print_tactile_zones(glove),
             print_emf_poses(glove),
+            print_hand_joint_angles(glove),
+            print_hand_skeleton(glove),
+            print_tactile_point_cloud(glove),
         ])
 
     print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")

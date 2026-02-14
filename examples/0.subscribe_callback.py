@@ -3,7 +3,8 @@
 Callback subscription example.
 
 Auto-detect and connect to Wuji Gloves, subscribe to data streams
-(tactile, tactile_zones, emf_poses) using subscribe_with_callback().
+(tactile, tactile_zones, emf_poses, hand_joint_angles, hand_skeleton,
+tactile_point_cloud) using subscribe_with_callback().
 
 Callbacks run in background, allowing non-blocking data processing.
 
@@ -12,7 +13,7 @@ Usage: python 0.subscribe_callback.py
 
 import time
 from functools import partial
-from wuji_sdk import SdkManager, TactileFrame, TactileZones, EmfPoseArray
+from wuji_sdk import SdkManager, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
 
 
 def avg(lst: list[float]) -> float:
@@ -31,6 +32,21 @@ def on_emf_poses(device_name: str, poses: EmfPoseArray):
     if poses.poses:
         pos = poses.poses[0].pose.position
         print(f"[{device_name}][EmfPoses] thumb=[{pos[0]:+.3f}, {pos[1]:+.3f}, {pos[2]:+.3f}]")
+
+
+def on_hand_joint_angles(device_name: str, angles: HandJointAngles):
+    confs = [f.confidence for f in angles.fingers]
+    print(f"[{device_name}][JointAngles] conf={[f'{c:.2f}' for c in confs]}")
+
+
+def on_hand_skeleton(device_name: str, skeleton: HandSkeleton):
+    wrist = skeleton.joints[0]
+    pos = wrist.pose.position
+    print(f"[{device_name}][Skeleton] wrist=[{pos[0]:+.3f}, {pos[1]:+.3f}, {pos[2]:+.3f}] joints={len(skeleton.joints)}")
+
+
+def on_tactile_point_cloud(device_name: str, cloud: PointCloud):
+    print(f"[{device_name}][PointCloud] points={cloud.point_count()} frame={cloud.frame_id}")
 
 
 def main():
@@ -52,6 +68,9 @@ def main():
         subscriptions.append(glove.tactile().subscribe_with_callback(partial(on_tactile, glove.device_name)))
         subscriptions.append(glove.tactile_zones().subscribe_with_callback(partial(on_tactile_zones, glove.device_name)))
         subscriptions.append(glove.emf_poses().subscribe_with_callback(partial(on_emf_poses, glove.device_name)))
+        subscriptions.append(glove.hand_joint_angles().subscribe_with_callback(partial(on_hand_joint_angles, glove.device_name)))
+        subscriptions.append(glove.hand_skeleton().subscribe_with_callback(partial(on_hand_skeleton, glove.device_name)))
+        subscriptions.append(glove.tactile_point_cloud().subscribe_with_callback(partial(on_tactile_point_cloud, glove.device_name)))
 
     print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
 
