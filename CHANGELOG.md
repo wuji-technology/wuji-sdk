@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-09
+
+### Added
+- Cross-device merged topics — `manager.subscribe("tf_static")` aggregates data from all connected devices into a single stream
+- MCAP recording engine — record multi-channel sensor data to MCAP files with LZ4/Zstd compression
+  - `TopicRecorder` for configuring and starting recording sessions
+  - `RecordingHandle` for pause/resume/stop control
+  - Real-time quality monitoring: frame drop rate, jitter, cross-channel sync offset
+  - Episode switching: reuse session config, switch output file for new episodes
+
+### Fixed
+- Fix a crash (segfault) when an unhandled exception occurs while callback subscriptions are active
+- Fix an issue where subscribing to multiple resources simultaneously could result in missing data
+- **Wuji Glove**: Fix an issue that prevents certain topics (e.g. `imu_data/palm`) from being subscribed
+
 ## [0.6.0] - 2026-02-14
 
 ### Added
@@ -35,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wuji-technology/wuji-sdk/releases/tag/v0.5.0
