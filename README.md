@@ -34,6 +34,9 @@ from wuji_sdk import SdkManager
 
 manager = SdkManager.instance()
 devices = manager.scan()
+if not devices:
+    print("No devices found")
+    exit()
 glove = manager.connect(sn=devices[0].sn, device_name="glove")
 
 sub = glove.tactile().subscribe_with_callback(
