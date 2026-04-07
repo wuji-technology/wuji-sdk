@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-07
+
+### Fixed
+
+- Fixed a crash when pausing and resuming a recording session
+- Fixed out-of-order timestamps in MCAP files after pausing and resuming
+
+## [0.8.0] - 2026-03-23
+
+### Added
+
+- Added multi-client support so the Wuji SDK can share a device with Wuji Studio
+- Late subscribers now receive a short replay of recent decoded device logs before switching to the live stream
+
+### Changed
+
+- MCAP recording stop no longer hangs when channels are idle
+- Encoder shutdown failures are now surfaced instead of being reported as success
+- Reconnecting to a device no longer replays logs from the previous connection session
+- Device log subscription now uses a dedicated receiver type that handles replay and live delivery transparently
+
 ## [0.7.0] - 2026-03-09
 
 ### Added
@@ -16,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `RecordingHandle` for pause/resume/stop control
   - Real-time quality monitoring: frame drop rate, jitter, cross-channel sync offset
   - Episode switching: reuse session config, switch output file for new episodes
+
+### Improved
+- **Wuji Glove**: Improved tactile point cloud accuracy with mesh-based skinning deformation, replacing the previous geometric approximation
 
 ### Fixed
 - Fix a crash (segfault) when an unhandled exception occurs while callback subscriptions are active
@@ -50,7 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wuji-technology/wuji-sdk/releases/tag/v0.5.0
