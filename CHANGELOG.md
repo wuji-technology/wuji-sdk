@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-15
+
+### Added
+
+- `WujiDevice::export_flash_logs(out_dir)` — dump historical device logs to JSONL at `<out_dir>/<sn>_<unix_ts>.jsonl`, safe against log buffer wrap during export
+- Per-channel recording health via `QualityMetrics.channels: List[ChannelHealth]` — frame rate, drop rate, jitter, `is_online`, and `last_downtime_ms` for each recorded topic
+
+### Changed
+
+- **Wuji Glove**: `hand_joint_angles` and `tip_poses` are now derived from the URDF kinematic chain; numerical values may differ from previous SDK versions, output schemas unchanged
+
+### Removed
+
+- **Wuji Glove**: Removed `glove.tactile_raw()` and `TactileRawResource` — subscribe to `glove.tactile()` (calibrated tactile frames) instead
+- **Wuji Glove**: Removed `glove.factory_reset()`
+
+### Fixed
+
+- Fixed a harmless warning on Python script exit, and ensured devices publish their offline status reliably when `disconnect_all()` is called from non-async contexts
+
 ## [0.9.0] - 2026-04-07
 
 ### Fixed
@@ -74,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.6.0...v0.7.0

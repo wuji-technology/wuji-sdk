@@ -13,7 +13,7 @@ Usage: python 0.subscribe_callback.py
 
 import time
 from functools import partial
-from wuji_sdk import SdkManager, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
+from wuji_sdk import SdkManager, ConnectOptions, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
 
 
 def avg(lst: list[float]) -> float:
@@ -63,6 +63,11 @@ def main():
 
     subscriptions = []
     for i, dev in enumerate(devices):
+        # By default, the SDK allows multiple clients (this script, Wuji Studio,
+        # a recorder, etc.) to connect to the same device concurrently.
+        # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
+        # for exclusive single-client use.
+        # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
         glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
         print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
         subscriptions.append(glove.tactile().subscribe_with_callback(partial(on_tactile, glove.device_name)))
