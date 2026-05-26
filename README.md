@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/wuji-technology/wuji-sdk)](https://github.com/wuji-technology/wuji-sdk/releases) ![Coverage](https://raw.githubusercontent.com/wuji-technology/wuji-sdk/badges/coverage.svg)
 
-Python SDK for Wuji series devices. Provides automatic device discovery, connection management, and real-time data streaming for Wuji Glove and other Wuji peripherals. Features type-safe semantic API with native async/await and callback-based subscription support, multi-channel MCAP recording, and rich hand tracking data including joint angles, skeleton, and fingertip poses.
+Python SDK for Wuji series devices. Provides automatic device discovery, connection management, and real-time data streaming for Wuji Glove, Wuji Hand 2, and other Wuji peripherals. Features type-safe semantic API with native async/await and callback-based subscription support, multi-channel MCAP recording, and rich hand tracking data including joint angles, skeleton, and fingertip poses.
 
 **Get started with [Quick Start](#quick-start). For detailed documentation, please refer to [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-glove/latest/).**
 
@@ -10,9 +10,15 @@ Python SDK for Wuji series devices. Provides automatic device discovery, connect
 
 ```text
 ├── examples/                      # Example scripts demonstrating SDK usage patterns
-│   ├── 0.subscribe_callback.py
-│   ├── 1.subscribe_async.py
-│   └── 2.recording.py
+│   ├── wuji_glove/                # Wuji Glove examples
+│   │   ├── 0.subscribe_callback.py    # callback subscription (tactile, EMF, skeleton)
+│   │   ├── 1.subscribe_async.py       # async/await subscription
+│   │   ├── 2.recording.py             # record to MCAP with TopicRecorder + LZ4
+│   │   └── 3.offline_pipeline.py      # offline IK / fusion pipeline (no device required)
+│   └── wuji_hand_2/               # Wuji Hand 2 examples
+│       ├── 0.subscribe_callback.py    # callback subscription (joint_state)
+│       ├── 1.subscribe_async.py       # async/await subscription
+│       └── 2.publish.py               # joint_command publisher demo (200 Hz pos hold)
 ├── CHANGELOG.md                   # Version history and release notes
 ├── LICENSE                        # MIT license file
 └── README.md
