@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.6.2] - 2026-06-02
+
+### Added
+
+- **Wuji Glove**: Added `glove.tactile_binary()` — publishes a 768-element binary contact frame (`1.0` contact, `0.0` no contact, `-1.0` invalid) at the same rate as `tactile`, sharing `TactileFrame`'s shape so existing tactile-grid visualizers work unchanged.
+- `SdkManager.connect(handedness=Handedness.Left | Handedness.Right, device_name=...)` — connect to a bimanual device by side.
+
 ## [2026.5.26]
 
 ### Added
@@ -101,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.5.26...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...HEAD
+[2026.6.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.5.26...v2026.6.2
 [2026.5.26]: https://github.com/wuji-technology/wuji-sdk/compare/v0.10.0...v2026.5.26
 [0.10.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.8.0...v0.9.0
