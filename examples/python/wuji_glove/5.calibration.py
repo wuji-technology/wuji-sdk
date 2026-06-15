@@ -38,10 +38,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-s", type=float, default=900.0)
     parser.add_argument(
         "--hand-profile",
-        choices=[WujiHandProfile.WUJI_HAND_1.value, WujiHandProfile.WUJI_HAND_2.value],
+        choices=[WujiHandProfile.WUJI_HAND.value, WujiHandProfile.WUJI_HAND_2.value],
         default=None,
         help=(
-            "Generate only one hand profile: wujihand = Wuji Hand 1 / first-generation hand, "
+            "Generate only one hand profile: wujihand = Wuji Hand / first-generation hand, "
             "wujihand2 = Wuji Hand 2 / second-generation hand. Omit to generate both."
         ),
     )
