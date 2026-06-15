@@ -1,0 +1,47 @@
+cmake_minimum_required(VERSION 3.16)
+project(wuji_sdk_c_example LANGUAGES C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# The default CACHE paths below assume the SDK's include/ and lib/ sit as
+# siblings of this directory. The release tarball ships only lib/ + include/
+# (no examples), so normally you build this example from a repo checkout and
+# point it at an extracted SDK:
+#   cmake -S . -B build \
+#     -DWUJI_SDK_INCLUDE_DIR=<extracted>/include \
+#     -DWUJI_SDK_LIB=<extracted>/lib/libwuji_sdk_c.so
+# For in-repo development, point at the build output instead:
+#   -DWUJI_SDK_INCLUDE_DIR=<repo>/crates/sdk-c/include
+#   -DWUJI_SDK_LIB=<repo>/target/release/libwuji_sdk_c.so
+set(WUJI_SDK_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../include" CACHE PATH
+    "Directory containing wuji_sdk.h")
+set(WUJI_SDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../../../lib/libwuji_sdk_c.so" CACHE FILEPATH
+    "Path to libwuji_sdk_c.so")
+
+if(NOT EXISTS "${WUJI_SDK_INCLUDE_DIR}/wuji_sdk.h")
+    message(FATAL_ERROR "wuji_sdk.h not found: ${WUJI_SDK_INCLUDE_DIR}/wuji_sdk.h")
+endif()
+if(NOT EXISTS "${WUJI_SDK_LIB}")
+    message(FATAL_ERROR "libwuji_sdk_c.so not found: ${WUJI_SDK_LIB}")
+endif()
+
+add_executable(0_subscribe_callback 0_subscribe_callback.c)
+target_include_directories(0_subscribe_callback PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
+target_link_libraries(0_subscribe_callback PRIVATE "${WUJI_SDK_LIB}")
+target_compile_options(0_subscribe_callback PRIVATE -Wall -Wextra -O2)
+
+# RPATH so the built binary finds libwuji_sdk_c.so without LD_LIBRARY_PATH.
+# - BUILD_RPATH: when run from the build tree, use the absolute directory of
+#   WUJI_SDK_LIB (works for both extracted-tarball and in-repo layouts).
+# - INSTALL_RPATH: $ORIGIN-relative fallback for an installed binary; ld.so
+#   resolves $ORIGIN to the executable's own directory.
+get_filename_component(_wuji_sdk_lib_dir "${WUJI_SDK_LIB}" DIRECTORY)
+set_target_properties(0_subscribe_callback PROPERTIES
+    BUILD_RPATH   "${_wuji_sdk_lib_dir}"
+    INSTALL_RPATH "\$ORIGIN/../../../../lib"
+)
+
+message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
+message(STATUS "WUJI_SDK_LIB         = ${WUJI_SDK_LIB}")

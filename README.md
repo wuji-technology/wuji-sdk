@@ -2,57 +2,46 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/wuji-technology/wuji-sdk)](https://github.com/wuji-technology/wuji-sdk/releases) ![Coverage](https://raw.githubusercontent.com/wuji-technology/wuji-sdk/badges/coverage.svg)
 
-Python SDK for Wuji series devices. Provides automatic device discovery, connection management, and real-time data streaming for Wuji Glove, Wuji Hand 2, and other Wuji peripherals. Features type-safe semantic API with native async/await and callback-based subscription support, multi-channel MCAP recording, and rich hand tracking data including joint angles, skeleton, and fingertip poses.
+SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other peripherals): automatic device discovery, connection management, and real-time data streaming — rich hand-tracking data (joint angles, skeleton, fingertip poses), tactile/EMF sensing, and multi-channel MCAP recording.
 
-**Get started with [Quick Start](#quick-start). For detailed documentation, please refer to [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-glove/latest/).**
+## SDKs
+
+| Language | Install | Docs | Examples |
+|----------|---------|------|----------|
+| **Python** | `pip install wuji-sdk` | [examples/python/README.md](examples/python/README.md) | [examples/python/](examples/python/) |
+| **C** | Prebuilt tarball on each [Release](https://github.com/wuji-technology/wuji-sdk/releases) | [examples/c/README.md](examples/c/README.md) | [examples/c/](examples/c/) |
+
+The Python SDK is the primary, full-featured interface. The C SDK exposes a C API (`libwuji_sdk_c.so` + `wuji_sdk.h`) for native/embedded integration.
 
 ## Repository Structure
 
 ```text
-├── examples/                      # Example scripts demonstrating SDK usage patterns
-│   ├── wuji_glove/                # Wuji Glove examples
-│   │   ├── 0.subscribe_callback.py    # callback subscription (tactile, EMF, skeleton)
-│   │   ├── 1.subscribe_async.py       # async/await subscription
-│   │   ├── 2.recording.py             # record to MCAP with TopicRecorder + LZ4
-│   │   └── 3.offline_pipeline.py      # offline IK / fusion pipeline (no device required)
-│   └── wuji_hand_2/               # Wuji Hand 2 examples
-│       ├── 0.subscribe_callback.py    # callback subscription (joint_state)
-│       ├── 1.subscribe_async.py       # async/await subscription
-│       └── 2.publish.py               # joint_command publisher demo (200 Hz pos hold)
-├── CHANGELOG.md                   # Version history and release notes
-├── LICENSE                        # MIT license file
+├── examples/
+│   ├── python/              # Python SDK docs (README) + examples (pip install wuji-sdk)
+│   │   ├── README.md
+│   │   ├── wuji_glove/
+│   │   ├── wuji_hand/
+│   │   └── wuji_hand_2/
+│   └── c/                   # C SDK docs (README) + examples (prebuilt tarball from Releases)
+│       ├── README.md
+│       └── wuji_glove/
+├── CHANGELOG.md             # Version history (Python + C SDK)
+├── LICENSE
 └── README.md
 ```
 
-## Quick Start
+## Documentation
 
-### Installation
+For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-glove/latest/).
 
-```bash
-pip install wuji-sdk
-```
+## Changelog
 
-### Running
-
-```python
-import time
-from wuji_sdk import SdkManager
-
-manager = SdkManager.instance()
-devices = manager.scan()
-if not devices:
-    print("No devices found")
-    exit()
-glove = manager.connect(sn=devices[0].sn, device_name="glove")
-
-sub = glove.tactile().subscribe_with_callback(
-    callback=lambda frame: print(f"Max pressure: {max(frame.data):.2f}")
-)
-
-time.sleep(10)
-sub.close()
-```
+See [CHANGELOG.md](CHANGELOG.md) for the version history of both SDKs.
 
 ## Contact
 
 For any questions, please contact [support@wuji.tech](mailto:support@wuji.tech).
+
+## License
+
+[MIT](LICENSE)

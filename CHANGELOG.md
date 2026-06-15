@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.6.15]
+
+### Added
+
+- **Wuji Glove / Python SDK**: Added local SDK user profiles — each profile keeps its own calibration data per device, and switching profiles reloads calibration on connected devices immediately.
+- **Wuji Glove / Python SDK**: Added Python-side IK calibration with per-pose progress callbacks and an option to generate URDFs for one or both hand profiles from a single capture, selectable later for live hand tracking.
+- **Wuji Glove**: Added `glove.tactile_residual()` — publishes a continuous baseline-removed contact signal at the same rate as `tactile`, with the same frame shape so existing tactile visualizers work unchanged. An untouched hand rests near 0. Apply your own thresholding instead of the built-in `tactile_binary` output.
+- **C SDK**: Added a prebuilt C SDK with device discovery, typed per-stream subscription callbacks (tactile, EMF poses, hand joint angles, hand skeleton), and global cross-device coordinate transforms (`tf`, `tf_static`). Distributed as a tarball attached to each Release for `x86_64-linux-gnu`, `aarch64-linux-gnu`, and `aarch64-android`.
+- **Wuji Hand**: Added initial public version — USB auto-discovery and connection, motor enable/disable, per-joint effort limits, real-time joint state subscription (20 joints, position), joint command publishing with real-time command smoothing, and an optional plug-in tactile glove stream.
+
+### Changed
+
+- **Wuji Glove**: Parallelized hand pose solving across CPU cores, reducing the compute time behind `hand_joint_angles` and the hand-tracking data derived from it. Output values and schemas are unchanged.
+- **Wuji Hand**: Mirrored the Wuji Hand 2 SDK API surface (scan, connect, joint state, joint command, realtime controller), so existing Wuji Hand 2 example code transfers to Wuji Hand with minimal changes.
+
 ## [2026.6.2] - 2026-06-02
 
 ### Added
@@ -108,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...HEAD
+[2026.6.15]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...v2026.6.15
 [2026.6.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.5.26...v2026.6.2
 [2026.5.26]: https://github.com/wuji-technology/wuji-sdk/compare/v0.10.0...v2026.5.26
 [0.10.0]: https://github.com/wuji-technology/wuji-sdk/compare/v0.9.0...v0.10.0
