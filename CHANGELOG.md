@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.6.16]
+
+### Added
+
+- **Wuji Glove**: Added `glove.emf_poses_rate_divider()` to lower the EMF pose output rate. Set an integer divider N (default 1) with `glove.emf_poses_rate_divider().set(N)` to publish poses at input_rate / N (e.g. N=4 → ~30 Hz from the 120 Hz source); read it back with `.get()`. Every stream derived from EMF poses drops to the same rate automatically — `emf_poses`, `hand_joint_angles`, `tip_poses`, `hand_skeleton`, and `tactile_point_cloud` — which reduces the CPU spent on inverse-kinematics solving. IMU-driven streams (`imu_*`, `tf`) and the raw tactile streams (`tactile`, `tactile_zones`, `tactile_residual`, `tactile_binary`) keep their original rate. The setting applies at runtime and persists across reconnects.
+
+### Fixed
+
+- Fixed known issues for the public SDK release.
+
 ## [2026.6.15]
 
 ### Added
@@ -123,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...HEAD
+[2026.6.16]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...v2026.6.16
 [2026.6.15]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...v2026.6.15
 [2026.6.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.5.26...v2026.6.2
 [2026.5.26]: https://github.com/wuji-technology/wuji-sdk/compare/v0.10.0...v2026.5.26
