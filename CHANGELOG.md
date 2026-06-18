@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.6.18]
+
+### Added
+
+- **Wuji Hand 2**: Added a `ControlMode` enum (`ControlMode.Off`, `.Mit`, `.Position`, `.Velocity`, `.Current`) for `hand.set_all_control_mode(...)` and `hand.control_mode().set(...)`. The previous lowercase string form (`"off"`, `"mit"`, `"position"`, `"velocity"`, `"current"`) still works.
+- **Wuji Hand 2**: Added a query for the connected hand's side, reporting `"left"` or `"right"`. Raises if the device reports an unrecognized value.
+
+### Changed
+
+- **Wuji Hand 2**: Replaced `hand.clear_fault().set(1)` with a direct action `hand.clear_fault()` (no argument) that clears all joint faults, matching `hand.reboot()`. Update any `hand.clear_fault().set(1)` call to `hand.clear_fault()`.
+- **Wuji Hand 2**: Changed the whole-hand read methods (`diagnostics`, `calib_result`, `mit_params`, `speed_pi`, `current_pi`, `aux_function`, `get_diagnostic_status`, `online_joints_count`) to raise on disconnect instead of silently returning empty data. A reachable hand with offline joints still returns `None` entries, so disconnect and offline are now distinguishable. Wrap reads in `try/except` if the hand may be disconnected.
+- **Wuji Glove**: Updated tactile data layout to 744 values arranged 24×31 (was 768, 24×32). A dead sensor column is dropped at the device, so `tactile`, `tactile_residual`, and `tactile_binary` frames — and the per-zone tactile layout — are correspondingly smaller. Invalid taxels are still reported as `-1.0`.
+
 ## [2026.6.16]
 
 ### Added
@@ -133,7 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...HEAD
+[2026.6.18]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...v2026.6.18
 [2026.6.16]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...v2026.6.16
 [2026.6.15]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...v2026.6.15
 [2026.6.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.5.26...v2026.6.2
