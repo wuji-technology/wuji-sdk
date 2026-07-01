@@ -45,6 +45,7 @@ import time
 import numpy as np
 
 from wuji_sdk import (
+    ConnectOptions,
     Handedness,
     JointCommand,
     LowPass,
@@ -149,8 +150,9 @@ def run_teleop(manager) -> int:
     # share the same transport, so don't distinguish them by transport.)
     hand = None
     glove = None
+    no_bridge = ConnectOptions(enable_bridge=False)
     for d in manager.scan():
-        dev = manager.connect(sn=d.sn, device_name=d.sn)
+        dev = manager.connect(sn=d.sn, device_name=d.sn, options=no_bridge)
         if isinstance(dev, (WujiHand2, WujiHand)):
             hand = dev
         elif isinstance(dev, WujiGlove):

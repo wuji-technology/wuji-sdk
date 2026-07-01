@@ -1,7 +1,7 @@
 /*
  * Wuji SDK C — WujiGlove emf_poses rate divider.
  *
- * C port of public/examples/python/wuji_glove/6.emf_poses_rate_divider.py.
+ * Demonstrates the C API for controlling the emf_poses rate divider.
  *
  * EMF poses are solved at the EMF sensor rate (~120 Hz); every downstream
  * hand-tracking stream is recomputed from each emf_poses frame, and the inverse

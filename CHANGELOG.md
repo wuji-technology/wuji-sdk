@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.2]
+
+### Fixed
+
+- **Retargeting**: Fixed the live teleoperation example (`examples/python/retargeting/1.teleop_real.py`) — it now connects with `ConnectOptions(enable_bridge=False)` so the glove → retarget → hand loop runs correctly.
+- **Wuji Hand**: Fixed reconnecting within the same process — after `disconnect()`, a new `connect()` to the same hand previously failed until the process exited. After `disconnect()` the handle is no longer usable; create a new connection to reconnect.
+
 ## [2026.7.1]
 
 ### Added
@@ -175,7 +182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...HEAD
+[2026.7.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...v2026.7.1
 [2026.6.18]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...v2026.6.18
 [2026.6.16]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...v2026.6.16
