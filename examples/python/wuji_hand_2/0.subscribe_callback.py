@@ -2,10 +2,8 @@
 """
 Callback subscription example — Wuji Hand 2.
 
-Auto-detect and connect to Wuji Hand 2 devices, enable motors, then subscribe to
-the joint_state data stream using subscribe_with_callback().
-
-Callbacks run in background threads, allowing non-blocking data processing.
+Subscribe to the joint_states stream with subscribe_with_callback();
+callbacks run in background threads.
 
 Usage: python 0.subscribe_callback.py
 """
@@ -13,14 +11,22 @@ Usage: python 0.subscribe_callback.py
 import time
 from functools import partial
 
-from wuji_sdk import SdkManager, ConnectOptions, WujiHand2, JointState
+from wuji_sdk import SdkManager, WujiHand2, JointStateFrame
 
 
-def on_joint_state(device_name: str, state: JointState):
-    # Print the first 4 joints (thumb) as a compact sample
-    thumb = state.joints[:4]
-    positions = [f"{j.actual_pos:+.3f}" for j in thumb]
-    print(f"[{device_name}][JointState] cycle={state.cycle_id} thumb_pos={positions}")
+def on_joint_states(device_name: str, frame: JointStateFrame):
+    # JointStateFrame: .header / .num_joints / .joints
+    #   header (FrameHeader): .seq / .timestamp_us / .frame_id
+    # Each JointStateEntry: .nid / .position / .velocity / .effort
+    # frame.joints is a variable-length list (online joints only); use .nid to
+    # identify each joint.
+    thumb = frame.joints[:4]
+    positions = [f"{j.position:+.3f}" for j in thumb]
+    h = frame.header  # FrameHeader: 复用全帧通用帧头
+    print(
+        f"[{device_name}][JointState] seq={h.seq} t={h.timestamp_us}us "
+        f"frame={h.frame_id!r} thumb_pos={positions}"
+    )
 
 
 def main():
@@ -38,17 +44,11 @@ def main():
     hands: list[WujiHand2] = []
     subscriptions = []
     for i, dev in enumerate(devices):
-        # By default, the SDK allows multiple clients (this script, Wuji Studio,
-        # a recorder, etc.) to connect to the same device concurrently.
-        # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
-        # for exclusive single-client use.
-        # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
         hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
         print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
-        hand.enable()
         hands.append(hand)
         subscriptions.append(
-            hand.joint_state().subscribe_with_callback(partial(on_joint_state, hand.device_name))
+            hand.joint_states().subscribe_with_callback(partial(on_joint_states, hand.device_name))
         )
 
     print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
@@ -61,8 +61,6 @@ def main():
     finally:
         for sub in subscriptions:
             sub.close()
-        for hand in hands:
-            hand.disable()
 
 
 if __name__ == "__main__":

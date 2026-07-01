@@ -1,7 +1,11 @@
 /*
  * Wuji SDK C bindings — typed multi-stream subscription.
  *
- * Build: cmake -S . -B build && cmake --build build
+ * Build: point CMake at your extracted SDK tarball (see ../README.md):
+ *          cmake -S . -B build \
+ *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
+ *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
+ *          cmake --build build
  * Run:   ./build/0_subscribe_callback
  *
  * NOTE: subscription callbacks do NOT run on this thread (main). They fire on

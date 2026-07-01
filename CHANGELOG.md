@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.1]
+
+### Added
+
+- **Retargeting**: Added hand retargeting — map human hand keypoints (21 MediaPipe-format landmarks) to Wuji Hand joint angles. Build a session with `wuji_sdk.retargeting.RetargetSession.for_hand(HandModel.WujiHand2, side=Handedness.Right)`, then call `session.step(keypoints)` to get a 20-value joint command ready to send to the device. A live teleoperation example (Wuji Glove keypoints → retarget → Wuji Hand / Wuji Hand 2) is included under `examples/python/retargeting/1.teleop_real.py`. Install the runtime dependencies with `pip install wuji-sdk[retarget]`. Linux x86_64 / aarch64 only.
+- **C SDK**: Added Wuji Hand 2 (dexterous hand) support, mirroring the redesigned resource-style Python interface — `joint_states` / `joint_diagnostics` subscription streams, `mit_params` and `effort_limit` configuration, control actions (enable / disable / clear faults / emergency stop / user origin), and a joint-command publisher. Whole-hand reads cover all 20 joints with a per-joint online bitmap so offline joints are distinguishable. String getters use a two-call size query: call once with a `NULL` buffer to get the required length, then again to fill it.
+- **C SDK**: Added `wuji_glove_get_emf_poses_rate_divider` / `wuji_glove_set_emf_poses_rate_divider` to lower the WujiGlove EMF pose output rate (divider N ≥ 1; output rate = input rate / N, e.g. N=4 → ~30 Hz from the 120 Hz source), matching the Python `glove.emf_poses_rate_divider()`. Every stream derived from EMF poses (`hand_joint_angles`, `tip_poses`, `hand_skeleton`, `tactile_point_cloud`) drops to the same rate automatically, reducing inverse-kinematics CPU. Applies at runtime and persists across reconnects.
+- **C SDK**: Added `wuji_glove_sync_time` (filling a `WujiTimeSyncResult` with the clock offset, round-trip time, and measurement timestamp in microseconds) to trigger a single time-sync round-trip with a Wuji Glove, matching Python `glove.sync_time()`.
+- **Wuji Glove / C SDK**: Added Python `glove.hand_model_path().get()/set(path)` and matching C `wuji_glove_get_hand_model_path` / `wuji_glove_set_hand_model_path` to select a custom WujiGlove hand URDF for online IK. Existing Python subscription examples now expose `--hand-model-path`, and the new C example sets and reads back the URDF before subscribing to `hand_joint_angles` to verify the live IK output.
+
+### Changed
+
+- **Wuji Glove**: Updated `tactile_point_cloud` to the 526-taxel active point-cloud contract. The SDK taxel mapping now matches the firmware's 24×31 tactile output and removes the eight additional hardware-masked taxels beyond the dropped dead column. Use this SDK with the matching firmware so point-cloud frames report 526 points consistently.
+- **Wuji Glove / SDK users**: Changed the default SDK user to always use the built-in default hand URDF for IK-derived streams (`hand_skeleton`, `hand_joint_angles`, `tip_poses`) and ignore stored calibration URDF paths. Running `calibrate` as the default user now fails fast with error code `0x4108`; create or switch to a named SDK user before calibration so generated URDFs are scoped to that user.
+- **Wuji Hand 2 — BREAKING**: Redesigned the interface into a unified resource-style API. Scripts written against the previous version must be updated, and the device firmware and SDK must be upgraded together. See the migration guide for details. The new model:
+  - **One access model.** Every feature is a resource accessed via `.get()` / `.set(...)` / `.subscribe()` / `.publish()`, plus action methods for control. Whole-hand and single-joint use the same methods: `hand.<resource>()` and `hand.joints()[k].<resource>()`.
+  - **Polymorphic `set`.** Pass a single value to apply it to all joints, or a 20-element array to set per joint.
+  - **Control actions.** `enable()`, `disable()`, `clear_fault()`, and user-zero `set_origin()` / `clear_origin()` — each accepts an optional length-20 0/1 mask to act on a subset of joints. `emergency_stop()` always acts on the whole hand.
+  - **Feedback as subscription streams.** `hand.joint_states()` (position / velocity / effort) and `hand.joint_diagnostics()` (status word / current / bus voltage / temperature / error code). Frames are variable-length and contain only online joints — identify each entry by its node id.
+  - **Real-time commands via a publisher.** `hand.joint_command().publish().send(joints)` — a list of 20 `JointCommand`, each carrying `position` / `velocity` / `effort`.
+  - **Configuration resources** `mit_params` (`(kp, kd)`) and `effort_limit` (amperes). Writes reject NaN / infinity / negative values; reads return 20 entries (offline joints are `None`).
+  - **Control mode** is no longer set from the Python API; the device operates in MIT control by default.
+  - **Typed reads auto-decode** — no manual byte parsing.
+  - **Error lookup.** `describe_error(code)` turns a status / error code into a human-readable description.
+- **Wuji Hand 2 — BREAKING**: Changed the joint-command publisher to take an array of structs. `hand.joint_command().publish().send(...)` changed from three parallel lists `send(positions, velocities, efforts)` to a single list of per-joint commands `send(joints)`, where each entry is a `JointCommand(position, velocity, effort)`. Pass exactly 20 `JointCommand`. Update any `send(positions, velocities, efforts)` call accordingly.
+- **Wuji Hand 2 — `joint_states` / `joint_diagnostics` feedback frames now carry a `FrameHeader`** (`seq` + `timestamp_us` + `frame_id`), consistent with the IMU / tactile feedback frames. `timestamp_us` is the firmware send time and `frame_id` is `l_wrist` / `r_wrist` (filled by the firmware from its own handedness) for 3D hand-pose visualization. The previous top-level `seq` field moved into `header.seq`. Requires the matching firmware build.
+- **Wuji Glove**: Local params files are now saved in a cleaner canonical form. The SDK no longer persists generated defaults, empty values, deprecated fields, or runtime-only cache data; existing legacy hand profile fields are migrated to the current `wujihand` / `wujihand2` names, and params files with no persistent settings are removed on save. This only changes the on-disk config file shape; runtime hand-tracking behavior remains unchanged.
+- **Wuji Glove**: Updated the built-in default hand model — the fallback hand geometry used for hand-tracking output (`hand_skeleton`, `hand_joint_angles`, `tip_poses`) when no per-device hand profile is loaded. Finger-segment lengths and joint origins are refreshed to the latest calibration for more accurate default hand tracking; the joint/link layout is unchanged. Only affects sessions relying on the default (uncalibrated) hand model.
+
 ## [2026.6.18]
 
 ### Added
@@ -146,7 +175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...HEAD
+[2026.7.1]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...v2026.7.1
 [2026.6.18]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...v2026.6.18
 [2026.6.16]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.15...v2026.6.16
 [2026.6.15]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.2...v2026.6.15
