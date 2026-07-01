@@ -5,16 +5,10 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# The default CACHE paths below assume the SDK's include/ and lib/ sit as
-# siblings of this directory. The release tarball ships only lib/ + include/
-# (no examples), so normally you build this example from a repo checkout and
-# point it at an extracted SDK:
+# Point CMake at the extracted SDK tarball:
 #   cmake -S . -B build \
-#     -DWUJI_SDK_INCLUDE_DIR=<extracted>/include \
-#     -DWUJI_SDK_LIB=<extracted>/lib/libwuji_sdk_c.so
-# For in-repo development, point at the build output instead:
-#   -DWUJI_SDK_INCLUDE_DIR=<repo>/crates/sdk-c/include
-#   -DWUJI_SDK_LIB=<repo>/target/release/libwuji_sdk_c.so
+#     -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
+#     -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
 set(WUJI_SDK_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../include" CACHE PATH
     "Directory containing wuji_sdk.h")
 set(WUJI_SDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../../../lib/libwuji_sdk_c.so" CACHE FILEPATH

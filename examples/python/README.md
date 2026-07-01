@@ -12,14 +12,6 @@ Python SDK for Wuji series devices. Provides automatic device discovery, connect
 pip install wuji-sdk
 ```
 
-When running examples from this repository against local source changes, rebuild
-and install the Python extension into the active virtual environment first:
-
-```bash
-cd crates/sdk-python
-maturin develop
-```
-
 ## Quick Start
 
 ```python

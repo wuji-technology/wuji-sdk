@@ -1,8 +1,7 @@
 /*
  * Wuji SDK C — Wuji Hand 2: MIT sweep (control).
  *
- * C port of the Rust example crates/sdk/examples/wuji_hand_2/mit_sweep.rs:
- * auto-detect a Wuji Hand 2, configure MIT impedance control (effort limit +
+ * Auto-detect a Wuji Hand 2, configure MIT impedance control (effort limit +
  * per-joint kp/kd), enable motors, wait for them to report Enabled, then sweep
  * all *online* joints around zero through a fixed frequency table. Each joint
  * follows pos = A·sin(ωt) with velocity feedforward A·ω·cos(ωt), ramped in over
@@ -13,7 +12,7 @@
  *
  * !! WARNING: this MOVES the hand through ±~45° sweeps. Keep it clear. !!
  *
- * The C publish call mirrors the Rust `publisher.send(&[JointCommand; 20])`:
+ * The C publish call sends one 20-joint command frame:
  *   WujiJointCommand cmds[20];   // each {position, velocity, effort}
  *   wuji_joint_command_publisher_send(pub, cmds);
  * Use {0, 0, 0} for joints you don't want to command.
@@ -45,7 +44,7 @@
 #define EXT_STATE_ENABLED 2u
 #define EXT_STATE(sw)     ((sw) & 0x3u)
 
-/* Parameters copied from mit_sweep.rs / mit_sweep.py so device motion matches. */
+/* Motion parameters shared with the SDK's sweep examples. */
 static const struct { float freq; int cycles; } SWEEP_TABLE[] = {
     {0.125f, 1}, {0.25f, 1}, {0.5f, 2}, {1.0f, 4}, {2.0f, 8},
 };
@@ -153,11 +152,10 @@ int main(void) {
     CHECK(wuji_hand_2_set_all_mit_params(dev, kp, kd), "set_all_mit_params");
     CHECK(wuji_hand_2_enable(dev, NULL), "enable"); /* NULL mask = whole hand */
 
-    /* ---- action: MIT sweep (ported from mit_sweep.rs) ---- */
+    /* ---- action: MIT sweep ---- */
 
-    /* Wait for all online joints to reach Enabled. The Rust example polls each
-     * joint's status_word; in C we subscribe to joint_diagnostics (which carries
-     * the same status_word per joint) and watch for an all-enabled frame. */
+    /* Wait for all online joints to reach Enabled. We subscribe to
+     * joint_diagnostics and watch for an all-enabled frame. */
     enable_ctx_t en = { 0 };
     struct WujiSub *diag_sub = NULL;
     if (wuji_hand_2_subscribe_joint_diagnostics(dev, on_diag, &en, &diag_sub) != WUJI_STATUS_OK) {
