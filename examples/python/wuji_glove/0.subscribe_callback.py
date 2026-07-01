@@ -18,7 +18,9 @@ import argparse
 import time
 from functools import partial
 from pathlib import Path
-from wuji_sdk import SdkManager, ConnectOptions, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
+from wuji_sdk import SdkManager, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
+
+from _device_selection import connect_gloves, scan_contains
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,29 +77,30 @@ def on_tactile_point_cloud(device_name: str, cloud: PointCloud):
 def main():
     args = parse_args()
     manager = SdkManager.instance()
-    devices = manager.scan()
+    gloves, devices = connect_gloves(manager, sn=args.sn, device_name_prefix="glove")
 
     if not devices:
         print("No devices found")
         return
-    if args.sn:
-        devices = [dev for dev in devices if dev.sn == args.sn]
-        if not devices:
-            print(f"Device not found: {args.sn}")
-            return
+    if args.sn and not scan_contains(devices, args.sn):
+        print(f"Device not found: {args.sn}")
+        return
 
     print(f"Found {len(devices)} device(s)")
     for dev in devices:
         print(f"  SN={dev.sn}, Address={dev.address}")
+    if not gloves:
+        suffix = f" matching SN={args.sn}" if args.sn else ""
+        print(f"No Wuji Glove devices found{suffix}")
+        return
 
     subscriptions = []
-    for i, dev in enumerate(devices):
+    for glove in gloves:
         # By default, the SDK allows multiple clients (this script, Wuji Studio,
         # a recorder, etc.) to connect to the same device concurrently.
         # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
         # for exclusive single-client use.
         # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
-        glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
         print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
         if args.hand_model_path is not None:
             glove.hand_model_path().set(str(args.hand_model_path))
@@ -120,6 +123,7 @@ def main():
     finally:
         for sub in subscriptions:
             sub.close()
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

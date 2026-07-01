@@ -34,11 +34,17 @@ unaffected reference) and prints each stream's measured rate at divider=1
 and divider=4, so you can see the whole emf_poses chain drop together while
 the IMU stream stays constant.
 
-Usage: python 6.emf_poses_rate_divider.py
+Usage:
+  python 6.emf_poses_rate_divider.py
+  python 6.emf_poses_rate_divider.py --sn <serial_number>
 """
 
+import argparse
 import asyncio
-from wuji_sdk import SdkManager, WujiGlove
+from contextlib import suppress
+from wuji_sdk import SdkManager
+
+from _device_selection import connect_first_glove, scan_contains
 
 # (label, subscribe callable, affected-by-divider?)
 STREAMS = [
@@ -52,6 +58,12 @@ STREAMS = [
 
 WINDOW_S = 3.0
 SETTLE_S = 0.6  # let a divider change take effect (handler re-reads every ~10 frames)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sn", default=None, help="Optional Wuji Glove serial number.")
+    return parser.parse_args()
 
 
 async def measure_rates(glove, divider: int) -> dict:
@@ -74,31 +86,47 @@ async def measure_rates(glove, divider: int) -> dict:
             counts[label] += 1
 
     tasks = [asyncio.create_task(count(label)) for label in subs]
-    await asyncio.sleep(WINDOW_S)
-    for t in tasks:
-        t.cancel()
+    try:
+        await asyncio.sleep(WINDOW_S)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for sub in subs.values():
+            with suppress(Exception):
+                sub.close()
     return {label: counts[label] / WINDOW_S for label in counts}
 
 
 async def main():
+    args = parse_args()
     manager = SdkManager.instance()
-    devices = manager.scan()
+    glove, devices = connect_first_glove(manager, sn=args.sn, device_name="glove")
     if not devices:
         print("No devices found")
         return
-    glove: WujiGlove = manager.connect(sn=devices[0].sn, device_name="glove")
+    if args.sn and not scan_contains(devices, args.sn):
+        print(f"Device not found: {args.sn}")
+        return
+    if glove is None:
+        suffix = f" matching SN={args.sn}" if args.sn else ""
+        print(f"No Wuji Glove devices found{suffix}")
+        return
     print(f"Connected: {glove.serial_number}\n")
 
-    hz_baseline = await measure_rates(glove, 1)
-    hz_divided = await measure_rates(glove, 4)
-    glove.emf_poses_rate_divider().set(1)  # restore default
+    try:
+        hz_baseline = await measure_rates(glove, 1)
+        hz_divided = await measure_rates(glove, 4)
+        glove.emf_poses_rate_divider().set(1)  # restore default
 
-    print(f"{'stream':<24}{'N=1 (Hz)':>10}{'N=4 (Hz)':>10}   effect")
-    print("-" * 60)
-    for label, _, affected in STREAMS:
-        tag = "follows divider" if affected else "unaffected"
-        print(f"{label:<24}{hz_baseline[label]:>10.0f}{hz_divided[label]:>10.0f}   {tag}")
-    print("\nThe emf_poses chain drops ~4x (less IK/FK CPU); the IMU stream is unchanged.")
+        print(f"{'stream':<24}{'N=1 (Hz)':>10}{'N=4 (Hz)':>10}   effect")
+        print("-" * 60)
+        for label, _, affected in STREAMS:
+            tag = "follows divider" if affected else "unaffected"
+            print(f"{label:<24}{hz_baseline[label]:>10.0f}{hz_divided[label]:>10.0f}   {tag}")
+        print("\nThe emf_poses chain drops ~4x (less IK/FK CPU); the IMU stream is unchanged.")
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ import asyncio
 from pathlib import Path
 from wuji_sdk import SdkManager, WujiGlove, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
 
+from _device_selection import connect_gloves, scan_contains
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -90,24 +92,25 @@ async def print_tactile_point_cloud(glove: WujiGlove):
 async def main():
     args = parse_args()
     manager = SdkManager.instance()
-    devices = manager.scan()
+    gloves, devices = connect_gloves(manager, sn=args.sn, device_name_prefix="glove")
 
     if not devices:
         print("No devices found")
         return
-    if args.sn:
-        devices = [dev for dev in devices if dev.sn == args.sn]
-        if not devices:
-            print(f"Device not found: {args.sn}")
-            return
+    if args.sn and not scan_contains(devices, args.sn):
+        print(f"Device not found: {args.sn}")
+        return
 
     print(f"Found {len(devices)} device(s)")
     for dev in devices:
         print(f"  SN={dev.sn}, Address={dev.address}")
+    if not gloves:
+        suffix = f" matching SN={args.sn}" if args.sn else ""
+        print(f"No Wuji Glove devices found{suffix}")
+        return
 
     tasks = []
-    for i, dev in enumerate(devices):
-        glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
+    for glove in gloves:
         print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
         if args.hand_model_path is not None:
             glove.hand_model_path().set(str(args.hand_model_path))
@@ -123,7 +126,10 @@ async def main():
         ])
 
     print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

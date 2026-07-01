@@ -21,6 +21,8 @@ from typing import Any
 
 from wuji_sdk import SdkManager, WujiException, WujiHandProfile, set_log_level
 
+from _device_selection import connect_first_glove, scan_contains
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -66,9 +68,18 @@ def print_current_user(manager: SdkManager) -> None:
 def connect_glove(manager: SdkManager, args: argparse.Namespace):
     if args.sn:
         print(f"Connecting to Wuji Glove SN={args.sn}...")
-        return manager.connect(sn=args.sn, device_name=args.device_name)
-    print("Scanning for Wuji Glove...")
-    return manager.auto_connect(device_name=args.device_name)
+    else:
+        print("Scanning for Wuji Glove...")
+
+    glove, devices = connect_first_glove(manager, sn=args.sn, device_name=args.device_name)
+    if not devices:
+        raise RuntimeError("No devices found")
+    if args.sn and not scan_contains(devices, args.sn):
+        raise RuntimeError(f"Device not found: {args.sn}")
+    if glove is None:
+        suffix = f" matching SN={args.sn}" if args.sn else ""
+        raise RuntimeError(f"No Wuji Glove devices found{suffix}")
+    return glove
 
 
 def print_result(result: dict[str, Any]) -> None:
