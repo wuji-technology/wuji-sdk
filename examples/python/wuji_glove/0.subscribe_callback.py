@@ -8,12 +8,35 @@ tactile_point_cloud) using subscribe_with_callback().
 
 Callbacks run in background, allowing non-blocking data processing.
 
-Usage: python 0.subscribe_callback.py
+Usage:
+  python 0.subscribe_callback.py
+  python 0.subscribe_callback.py --hand-model-path /absolute/path/to/hand.urdf
+  python 0.subscribe_callback.py --sn <serial_number> --hand-model-path /absolute/path/to/hand.urdf
 """
 
+import argparse
 import time
 from functools import partial
+from pathlib import Path
 from wuji_sdk import SdkManager, ConnectOptions, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--hand-model-path",
+        type=Path,
+        default=None,
+        help="Optional custom hand URDF for online IK.",
+    )
+    parser.add_argument("--sn", default=None, help="Optional Wuji Glove serial number.")
+    args = parser.parse_args()
+
+    if args.hand_model_path is not None:
+        args.hand_model_path = args.hand_model_path.expanduser().resolve()
+        if not args.hand_model_path.is_file():
+            parser.error(f"--hand-model-path is not readable: {args.hand_model_path}")
+    return args
 
 
 def avg(lst: list[float]) -> float:
@@ -50,12 +73,18 @@ def on_tactile_point_cloud(device_name: str, cloud: PointCloud):
 
 
 def main():
+    args = parse_args()
     manager = SdkManager.instance()
     devices = manager.scan()
 
     if not devices:
         print("No devices found")
         return
+    if args.sn:
+        devices = [dev for dev in devices if dev.sn == args.sn]
+        if not devices:
+            print(f"Device not found: {args.sn}")
+            return
 
     print(f"Found {len(devices)} device(s)")
     for dev in devices:
@@ -70,6 +99,10 @@ def main():
         # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
         glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
         print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
+        if args.hand_model_path is not None:
+            glove.hand_model_path().set(str(args.hand_model_path))
+            configured_path = glove.hand_model_path().get()
+            print(f"Set hand_model_path for {glove.serial_number}: {configured_path}")
         subscriptions.append(glove.tactile().subscribe_with_callback(partial(on_tactile, glove.device_name)))
         subscriptions.append(glove.tactile_zones().subscribe_with_callback(partial(on_tactile_zones, glove.device_name)))
         subscriptions.append(glove.emf_poses().subscribe_with_callback(partial(on_emf_poses, glove.device_name)))

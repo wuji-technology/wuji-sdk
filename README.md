@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/wuji-technology/wuji-sdk?cacheSeconds=3600)](https://github.com/wuji-technology/wuji-sdk/releases) ![Coverage](https://raw.githubusercontent.com/wuji-technology/wuji-sdk/badges/coverage.svg)
 
-SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other peripherals): automatic device discovery, connection management, and real-time data streaming — rich hand-tracking data (joint angles, skeleton, fingertip poses), tactile/EMF sensing, and multi-channel MCAP recording.
+SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other peripherals): automatic device discovery, connection management, and real-time data streaming — rich hand-tracking data (joint angles, skeleton, fingertip poses), tactile/EMF sensing, multi-channel MCAP recording, and hand retargeting (map keypoints to hand joint commands).
 
 ## SDKs
 
@@ -21,7 +21,8 @@ The Python SDK is the primary, full-featured interface. The C SDK exposes a C AP
 │   │   ├── README.md
 │   │   ├── wuji_glove/
 │   │   ├── wuji_hand/
-│   │   └── wuji_hand_2/
+│   │   ├── wuji_hand_2/
+│   │   └── retargeting/     # map hand keypoints → joint commands (pip install wuji-sdk[retarget])
 │   └── c/                   # C SDK docs (README) + examples (prebuilt tarball from Releases)
 │       ├── README.md
 │       └── wuji_glove/

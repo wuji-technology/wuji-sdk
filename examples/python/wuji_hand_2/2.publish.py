@@ -6,14 +6,12 @@ Auto-detect and connect to a Wuji Hand 2, configure MIT impedance control,
 enable motors, then stream zero-position commands at 200 Hz for 5 seconds —
 holding every joint at pos=0 with zero feedforward velocity / effort.
 
-This demonstrates the `hand.joint_command_publisher()` typed publish API:
+This demonstrates the `hand.joint_command().publish()` typed publish API:
 
-    publisher.send(positions)                      # positions only
-    publisher.send(positions, velocities)          # + velocities
-    publisher.send(positions, velocities, efforts) # + effort feedforward
+    publisher.send([JointCommand(pos, vel, eff), ...])  # one 20-joint frame
 
-Each call sends one 20-joint frame; the SDK serialises and ships it to the
-device with no response-wait, so this pattern scales to high-rate control loops.
+Each call sends one 20-element frame (one JointCommand per joint); the SDK
+serialises and ships it with no response-wait, scaling to high-rate loops.
 
 Usage: python 2.publish.py
 """
@@ -21,7 +19,7 @@ Usage: python 2.publish.py
 import sys
 import time
 
-from wuji_sdk import SdkManager, WujiHand2
+from wuji_sdk import JointCommand, SdkManager, WujiHand2
 
 TOTAL_JOINTS = 20
 PUB_HZ = 200
@@ -47,15 +45,38 @@ def main():
 
     publisher = None
     try:
-        # 1. Configure control: MIT mode, effort limit, per-joint kp/kd matrices.
-        hand.control_mode().set("mit")
+        # 1. Configure control: effort limit, kp/kd. (Firmware defaults to MIT
+        #    mode, so no control_mode set is needed.)
+        #    Polymorphic set: a scalar broadcasts to all joints; a 20-element
+        #    list applies per-joint.
         hand.effort_limit().set(EFFORT_LIMIT)
-        hand.mit_params().set(kp=[[KP] * 4] * 5, kd=[[KD] * 4] * 5)
+        hand.mit_params().set((KP, KD))          # (kp, kd) tuple, broadcast to all joints
         hand.enable()
 
-        # 2. Open the typed publisher and stream zero commands at PUB_HZ.
-        publisher = hand.joint_command_publisher()
-        zeros = [0.0] * TOTAL_JOINTS
+        # 2. Wait for motors to reach Enabled before publishing commands.
+        #    enable() is an action; sending commands too early may race ahead of
+        #    the enable completing.
+        #    ext_state: 0=Init 1=Ready 2=Enabled 3=Stopped
+        deadline = time.monotonic() + 5.0
+        diag_sub = hand.joint_diagnostics().subscribe()
+        try:
+            while time.monotonic() < deadline:
+                time.sleep(0.2)
+                frame = diag_sub.recv()
+                if frame is None or not frame.joints:
+                    continue
+                if all(e.status_word.ext_state == 2 for e in frame.joints):
+                    break
+            else:
+                print("Enable timeout — not all online motors reached Enabled.")
+                sys.exit(1)
+        finally:
+            diag_sub.close()
+        print("All motors enabled.")
+
+        # 3. Open the typed publisher and stream zero commands at PUB_HZ.
+        publisher = hand.joint_command().publish()
+        zeros = [JointCommand(0.0, 0.0, 0.0) for _ in range(TOTAL_JOINTS)]
         dt = 1.0 / PUB_HZ
         end = time.monotonic() + HOLD_SECONDS
 
@@ -63,8 +84,8 @@ def main():
         n = 0
         t0 = time.monotonic()
         while time.monotonic() < end:
-            # positions + velocities + efforts (all zeros = hold pose softly)
-            publisher.send(zeros, zeros, zeros)
+            # all-zero JointCommands = hold pose softly
+            publisher.send(zeros)
             n += 1
             wait = (t0 + dt * n) - time.monotonic()
             if wait > 0:

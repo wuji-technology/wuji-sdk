@@ -6,9 +6,9 @@ This example uses the SDK's remembered current local user. To create, inspect,
 or switch users, run 4.user.py first.
 
 Usage:
-  python 5.calibration.py --sn WG1JA00260128167
-  python 5.calibration.py --mode api --sn WG1JA00260128167
-  python 5.calibration.py --sn WG1JA00260128167 --hand-profile wujihand2
+  python 5.calibration.py --sn <serial_number>
+  python 5.calibration.py --mode api --sn <serial_number>
+  python 5.calibration.py --sn <serial_number> --hand-profile wujihand2
 """
 
 import argparse

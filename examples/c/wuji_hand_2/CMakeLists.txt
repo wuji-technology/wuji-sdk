@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(wuji_sdk_c_example LANGUAGES C)
+project(wuji_sdk_c_hand2_example LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -28,13 +28,9 @@ if(NOT EXISTS "${WUJI_SDK_LIB}")
 endif()
 
 # RPATH so built binaries find libwuji_sdk_c.so without LD_LIBRARY_PATH.
-# - BUILD_RPATH: when run from the build tree, use the absolute directory of
-#   WUJI_SDK_LIB (works for both extracted-tarball and in-repo layouts).
-# - INSTALL_RPATH: $ORIGIN-relative fallback for an installed binary; ld.so
-#   resolves $ORIGIN to the executable's own directory.
 get_filename_component(_wuji_sdk_lib_dir "${WUJI_SDK_LIB}" DIRECTORY)
 
-foreach(demo 0_subscribe_callback 1_emf_poses_rate_divider 2_set_hand_model_path)
+foreach(demo 0_subscribe_joint_states 1_control_motion 2_hand_info)
     add_executable(${demo} ${demo}.c)
     target_include_directories(${demo} PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
     target_link_libraries(${demo} PRIVATE "${WUJI_SDK_LIB}")
@@ -44,6 +40,7 @@ foreach(demo 0_subscribe_callback 1_emf_poses_rate_divider 2_set_hand_model_path
         INSTALL_RPATH "\$ORIGIN/../../../../lib"
     )
 endforeach()
+target_link_libraries(1_control_motion PRIVATE m)  # sinf()/cosf()
 
 message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
 message(STATUS "WUJI_SDK_LIB         = ${WUJI_SDK_LIB}")
