@@ -16,14 +16,15 @@ pip install wuji-sdk
 
 ```python
 import time
-from wuji_sdk import SdkManager
+from wuji_sdk import SdkManager, DeviceType
 
 manager = SdkManager.instance()
-devices = manager.scan()
-if not devices:
-    print("No devices found")
+# scan() reports each device's type, so connect only the glove.
+gloves = [d for d in manager.scan() if d.device_type == DeviceType.WujiGlove]
+if not gloves:
+    print("No Wuji Glove found")
     exit()
-glove = manager.connect(sn=devices[0].sn, device_name="glove")
+glove = manager.connect(sn=gloves[0].sn, device_name="glove")
 
 sub = glove.tactile().subscribe_with_callback(
     callback=lambda frame: print(f"Max pressure: {max(frame.data):.2f}")

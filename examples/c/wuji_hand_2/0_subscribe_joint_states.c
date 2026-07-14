@@ -101,11 +101,26 @@ int main(void) {
         wuji_shutdown();
         return 0;
     }
-    printf("Connecting to %s (%s)\n", list[0].serial_number, list[0].address);
+    size_t idx = n;
+    for (size_t i = 0; i < n; i++) {
+        printf("  SN=%s  Type=%s  Address=%s\n", list[i].serial_number, list[i].model, list[i].address);
+        if (idx == n && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) idx = i;
+    }
+    if (idx == n) {
+        printf("No Wuji Hand 2 found among the scanned devices\n");
+        wuji_discovered_free(list, n);
+        wuji_shutdown();
+        return 0;
+    }
+    printf("Connecting to %s (%s)\n", list[idx].serial_number, list[idx].address);
 
-    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[0].serial_number };
+    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[idx].serial_number };
+    WujiConnectOptions connect_opts = wuji_connect_options_default();
+    connect_opts.timeout_ms = 1000;
+    connect_opts.retry_count = 3;
+    connect_opts.enable_bridge = true;
     struct WujiDevice *dev = NULL;
-    WujiStatus st = wuji_connect(&tgt, "hand2", NULL, &dev);
+    WujiStatus st = wuji_connect(&tgt, "hand2", &connect_opts, &dev);
     wuji_discovered_free(list, n);
     if (st != WUJI_STATUS_OK) {
         fprintf(stderr, "wuji_connect failed: %s\n", wuji_last_error());

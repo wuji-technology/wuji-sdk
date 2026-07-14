@@ -5,10 +5,13 @@ Wuji Glove IK calibration example.
 This example uses the SDK's remembered current local user. To create, inspect,
 or switch users, run 4.user.py first.
 
+Calibration produces one hand model per side for the current SDK user
+(left_hand.urdf / right_hand.urdf). Any glove of the same side connected under
+the same user loads the same model.
+
 Usage:
   python 5.calibration.py --sn <serial_number>
   python 5.calibration.py --mode api --sn <serial_number>
-  python 5.calibration.py --sn <serial_number> --hand-profile wujihand2
 """
 
 import argparse
@@ -19,7 +22,7 @@ import sys
 import time
 from typing import Any
 
-from wuji_sdk import SdkManager, WujiException, WujiHandProfile, set_log_level
+from wuji_sdk import DeviceType, SdkManager, WujiException, set_log_level
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,15 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-constraints", action="store_true")
     parser.add_argument("--timeout-s", type=float, default=900.0)
     parser.add_argument(
-        "--hand-profile",
-        choices=[WujiHandProfile.WUJI_HAND.value, WujiHandProfile.WUJI_HAND_2.value],
-        default=None,
-        help=(
-            "Generate only one hand profile: wujihand = Wuji Hand / first-generation hand, "
-            "wujihand2 = Wuji Hand 2 / second-generation hand. Omit to generate both."
-        ),
-    )
-    parser.add_argument(
         "--log-level",
         default="warn",
         choices=["trace", "debug", "info", "warn", "warning", "error", "off"],
@@ -60,7 +54,16 @@ def print_current_user(manager: SdkManager) -> None:
     print(f"  display_name: {user.get('display_name')}")
     print(f"  description:  {user.get('description')}")
     print(f"  is_default:   {user.get('is_default')}")
-    print("\nCalibration data is scoped by SDK user_id + device serial number.")
+    print("\nCalibration results are stored per SDK user and hand side.")
+    if user.get("is_default"):
+        # Calibration requires a named user profile; guide before the error hits.
+        print(
+            "\nYou are on the default SDK user, which cannot run calibration.\n"
+            "Create and switch to a user profile first, e.g.:\n"
+            '    user = manager.create_user("user1")\n'
+            '    manager.switch_user(user["user_id"])\n'
+            "or run 4.user.py to manage profiles, then re-run this example."
+        )
 
 
 def connect_glove(manager: SdkManager, args: argparse.Namespace):
@@ -68,7 +71,13 @@ def connect_glove(manager: SdkManager, args: argparse.Namespace):
         print(f"Connecting to Wuji Glove SN={args.sn}...")
         return manager.connect(sn=args.sn, device_name=args.device_name)
     print("Scanning for Wuji Glove...")
-    return manager.auto_connect(device_name=args.device_name)
+    devices = manager.scan()
+    for dev in devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+    gloves = [d for d in devices if d.device_type == DeviceType.WujiGlove]
+    if not gloves:
+        raise SystemExit("No Wuji Glove found among the scanned devices")
+    return manager.connect(sn=gloves[0].sn, device_name=args.device_name)
 
 
 def print_result(result: dict[str, Any]) -> None:
@@ -85,7 +94,6 @@ def calibration_options(args: argparse.Namespace, on_feedback) -> dict[str, Any]
     return {
         "skip_constraints": args.skip_constraints,
         "timeout_s": args.timeout_s,
-        "hand_profile": args.hand_profile,
         "on_feedback": on_feedback,
     }
 

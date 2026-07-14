@@ -24,7 +24,6 @@
  *          cmake --build build
  * Run:   ./build/1_control_motion        (Ctrl+C to stop early)
  */
-#define _DEFAULT_SOURCE /* usleep(), M_PI */
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -114,11 +113,22 @@ int main(void) {
         wuji_shutdown();
         return 0;
     }
-    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[0].serial_number };
+    size_t idx = n_dev;
+    for (size_t i = 0; i < n_dev; i++) {
+        printf("  SN=%s  Type=%s  Address=%s\n", list[i].serial_number, list[i].model, list[i].address);
+        if (idx == n_dev && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) idx = i;
+    }
+    if (idx == n_dev) {
+        printf("No Wuji Hand 2 found among the scanned devices\n");
+        wuji_discovered_free(list, n_dev);
+        wuji_shutdown();
+        return 0;
+    }
+    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[idx].serial_number };
     struct WujiDevice *dev = NULL;
     WujiStatus st = wuji_connect(&tgt, "wuji_hand_2", NULL, &dev);
     char sn[64];
-    snprintf(sn, sizeof(sn), "%s", list[0].serial_number);
+    snprintf(sn, sizeof(sn), "%s", list[idx].serial_number);
     wuji_discovered_free(list, n_dev);
     if (st != WUJI_STATUS_OK) {
         fprintf(stderr, "wuji_connect failed: %s\n", wuji_last_error());

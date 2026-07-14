@@ -38,7 +38,7 @@ Usage: python 6.emf_poses_rate_divider.py
 """
 
 import asyncio
-from wuji_sdk import SdkManager, WujiGlove
+from wuji_sdk import SdkManager, DeviceType, WujiGlove
 
 # (label, subscribe callable, affected-by-divider?)
 STREAMS = [
@@ -86,7 +86,14 @@ async def main():
     if not devices:
         print("No devices found")
         return
-    glove: WujiGlove = manager.connect(sn=devices[0].sn, device_name="glove")
+    for dev in devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+
+    gloves = [d for d in devices if d.device_type == DeviceType.WujiGlove]
+    if not gloves:
+        print("No Wuji Glove found among the scanned devices")
+        return
+    glove: WujiGlove = manager.connect(sn=gloves[0].sn, device_name="glove")
     print(f"Connected: {glove.serial_number}\n")
 
     hz_baseline = await measure_rates(glove, 1)

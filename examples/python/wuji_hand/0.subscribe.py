@@ -10,7 +10,7 @@ Usage: python 0.subscribe.py
 
 import time
 
-from wuji_sdk import HandJointState, SdkManager, TransportType, WujiHand
+from wuji_sdk import DeviceType, HandJointStates, SdkManager, WujiHand
 
 REPORT_SECONDS = 1.0
 POLL_SLEEP_SECONDS = 0.0001
@@ -20,7 +20,10 @@ JOINTS_PER_FINGER = 4  # 5 fingers x 4 joints = 20 joints total
 
 def main():
     manager = SdkManager.instance()
-    devices = [dev for dev in manager.scan() if dev.transport_type == TransportType.Usb]
+    all_devices = manager.scan()
+    for dev in all_devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+    devices = [dev for dev in all_devices if dev.device_type == DeviceType.WujiHand]
 
     if not devices:
         print("No Wuji Hand devices found")
@@ -32,14 +35,14 @@ def main():
         hand = manager.connect(sn=devices[0].sn, device_name="wuji_hand")
         print(f"Connected: {hand.serial_number} ({hand.handedness_name()})")
 
-        sub = hand.joint_state().subscribe()
-        print("Subscribed to hand.joint_state(). Ctrl+C to stop.\n")
+        sub = hand.joint_states().subscribe()
+        print("Subscribed to hand.joint_states(). Ctrl+C to stop.\n")
 
         total = 0
         window_frames = 0
         window_start = time.monotonic()
         while True:
-            state: HandJointState | None = sub.recv()
+            state: HandJointStates | None = sub.recv()
             if state is None:
                 time.sleep(POLL_SLEEP_SECONDS)
                 continue

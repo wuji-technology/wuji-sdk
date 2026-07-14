@@ -131,8 +131,19 @@ int main(void) {
         wuji_shutdown();
         return 0;
     }
-    printf("Connecting to %s (%s)\n\n", list[0].serial_number, list[0].address);
-    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[0].serial_number };
+    size_t idx = n;
+    for (size_t i = 0; i < n; i++) {
+        printf("  SN=%s  Type=%s  Address=%s\n", list[i].serial_number, list[i].model, list[i].address);
+        if (idx == n && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_GLOVE) idx = i;
+    }
+    if (idx == n) {
+        printf("No Wuji Glove found among the scanned devices\n");
+        wuji_discovered_free(list, n);
+        wuji_shutdown();
+        return 0;
+    }
+    printf("Connecting to %s (%s)\n\n", list[idx].serial_number, list[idx].address);
+    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[idx].serial_number };
     struct WujiDevice *dev = NULL;
     WujiStatus st = wuji_connect(&tgt, "glove", NULL, &dev);
     wuji_discovered_free(list, n);

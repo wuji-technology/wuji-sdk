@@ -45,13 +45,11 @@ import time
 import numpy as np
 
 from wuji_sdk import (
-    ConnectOptions,
+    DeviceType,
     Handedness,
     JointCommand,
     LowPass,
     SdkManager,
-    WujiGlove,
-    WujiHand,
     WujiHand2,
     retargeting,
 )
@@ -145,23 +143,21 @@ def run_teleop(manager) -> int:
 
     """
 
-    # scan() reports a serial + transport but not the device model, so connect
-    # each device and classify it by its semantic type. (A glove and a hand can
-    # share the same transport, so don't distinguish them by transport.)
-    hand = None
-    glove = None
-    no_bridge = ConnectOptions(enable_bridge=False)
+    hand_dev = None
+    glove_dev = None
     for d in manager.scan():
-        dev = manager.connect(sn=d.sn, device_name=d.sn, options=no_bridge)
-        if isinstance(dev, (WujiHand2, WujiHand)):
-            hand = dev
-        elif isinstance(dev, WujiGlove):
-            glove = dev
+        print(f"  SN={d.sn}, Type={d.device_type}, Address={d.address}")
+        if d.device_type in (DeviceType.WujiHand2, DeviceType.WujiHand):
+            hand_dev = d
+        elif d.device_type == DeviceType.WujiGlove:
+            glove_dev = d
 
-    if hand is None or glove is None:
-        print("No Wuji Hand / Wuji Hand 2 found" if hand is None else "No Wuji Glove found")
-        manager.disconnect_all()  # release whatever the scan loop already connected
+    if hand_dev is None or glove_dev is None:
+        print("No Wuji Hand / Wuji Hand 2 found" if hand_dev is None else "No Wuji Glove found")
         return 1
+
+    hand = manager.connect(sn=hand_dev.sn, device_name=hand_dev.sn)
+    glove = manager.connect(sn=glove_dev.sn, device_name=glove_dev.sn)
 
     is_hand2 = isinstance(hand, WujiHand2)
     model = configure_wuji_hand_2(hand) if is_hand2 else configure_wuji_hand(hand)

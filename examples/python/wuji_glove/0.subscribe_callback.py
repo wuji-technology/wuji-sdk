@@ -18,7 +18,7 @@ import argparse
 import time
 from functools import partial
 from pathlib import Path
-from wuji_sdk import SdkManager, ConnectOptions, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
+from wuji_sdk import SdkManager, DeviceType, ConnectOptions, TactileFrame, TactileZones, EmfPoseArray, HandJointAngles, HandSkeleton, PointCloud
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         "--hand-model-path",
         type=Path,
         default=None,
-        help="Optional custom hand URDF for online IK.",
+        help="Optional custom hand URDF for online IK (requires a named SDK user).",
     )
     parser.add_argument("--sn", default=None, help="Optional Wuji Glove serial number.")
     args = parser.parse_args()
@@ -88,10 +88,15 @@ def main():
 
     print(f"Found {len(devices)} device(s)")
     for dev in devices:
-        print(f"  SN={dev.sn}, Address={dev.address}")
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+
+    gloves = [d for d in devices if d.device_type == DeviceType.WujiGlove]
+    if not gloves:
+        print("No Wuji Glove found among the scanned devices")
+        return
 
     subscriptions = []
-    for i, dev in enumerate(devices):
+    for i, dev in enumerate(gloves):
         # By default, the SDK allows multiple clients (this script, Wuji Studio,
         # a recorder, etc.) to connect to the same device concurrently.
         # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
