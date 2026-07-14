@@ -33,7 +33,6 @@
  *          cmake --build build
  * Run:   ./build/2_hand_info
  */
-#define _DEFAULT_SOURCE /* usleep() */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -93,8 +92,19 @@ int main(void) {
         wuji_shutdown();
         return 0;
     }
-    printf("Connecting to %s (%s)\n", list[0].serial_number, list[0].address);
-    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[0].serial_number };
+    size_t idx = n;
+    for (size_t i = 0; i < n; i++) {
+        printf("  SN=%s  Type=%s  Address=%s\n", list[i].serial_number, list[i].model, list[i].address);
+        if (idx == n && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) idx = i;
+    }
+    if (idx == n) {
+        printf("No Wuji Hand 2 found among the scanned devices\n");
+        wuji_discovered_free(list, n);
+        wuji_shutdown();
+        return 0;
+    }
+    printf("Connecting to %s (%s)\n", list[idx].serial_number, list[idx].address);
+    WujiConnectTarget tgt = { .kind = WUJI_CONNECT_TARGET_KIND_SN, .value = list[idx].serial_number };
     struct WujiDevice *dev = NULL;
     WujiStatus st = wuji_connect(&tgt, "hand2", NULL, &dev);
     wuji_discovered_free(list, n);

@@ -245,7 +245,10 @@ int main(void) {
            n_dev_total,
            (n_dev_used < n_dev_total) ? " (capped to MAX_DEVICES)" : "");
     for (size_t i = 0; i < n_dev_used; i++) {
-        printf("  SN=%s  Address=%s\n", list[i].serial_number, list[i].address);
+        printf("  SN=%s  Type=%s  Address=%s\n",
+               list[i].serial_number,
+               list[i].model,
+               list[i].address);
     }
 
     WujiDevice *devices[MAX_DEVICES] = {0};
@@ -255,6 +258,9 @@ int main(void) {
     size_t n_subs = 0;
 
     for (size_t i = 0; i < n_dev_used; i++) {
+        if (list[i].device_id != WUJI_DEVICE_TYPE_WUJI_GLOVE) {
+            continue;
+        }
         char alias[32];
         snprintf(alias, sizeof(alias), "glove_%zu", i);
 

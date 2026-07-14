@@ -18,7 +18,7 @@ import math
 import sys
 import time
 
-from wuji_sdk import LowPass, SdkManager, TransportType, WujiHand
+from wuji_sdk import DeviceType, JointCommand, LowPass, SdkManager, WujiHand
 
 TOTAL_JOINTS = 20
 JOINTS_PER_FINGER = 4  # finger-major layout: [J1, J2, J3, J4] per finger
@@ -52,7 +52,10 @@ def finger_slice(values: list[float], finger: int) -> list[str]:
 
 def main():
     manager = SdkManager.instance()
-    devices = [dev for dev in manager.scan() if dev.transport_type == TransportType.Usb]
+    all_devices = manager.scan()
+    for dev in all_devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+    devices = [dev for dev in all_devices if dev.device_type == DeviceType.WujiHand]
 
     if not devices:
         print("No Wuji Hand devices found")
@@ -68,7 +71,7 @@ def main():
 
         print(f"Starting LowPass controller ({LOWPASS_CUTOFF_HZ:.1f} Hz) ...")
         with hand.realtime_controller(LowPass(cutoff_hz=LOWPASS_CUTOFF_HZ)) as ctrl:
-            publisher = hand.joint_command().publisher()
+            publisher = hand.joint_command().publish()
             dt = 1.0 / PUB_HZ
 
             print(f"Opening/closing fingers at {PUB_HZ} Hz. Ctrl+C to stop.\n")
@@ -79,7 +82,7 @@ def main():
             while True:
                 curl = (1.0 - math.cos(x)) * CURL_AMPLITUDE
                 target = curl_target(curl)
-                publisher.send(target)
+                publisher.send([JointCommand(p, 0.0, 0.0) for p in target])
                 n += 1
 
                 now = time.monotonic()

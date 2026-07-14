@@ -3,9 +3,45 @@
 All notable changes to wuji-sdk will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
+
+## [2026.7.14]
+
+### Added
+
+- **Python SDK**: Added export, preview, and import of your Wuji user data as a portable `.zip` bundle. `SdkManager.export_user_data(user_id, out_path)` writes everything a user owns — calibration hand models plus the tactile model and its latest complete calibration run — into one file. `preview_user_data(zip_path)` validates a bundle and reports its contents without importing it. `import_user_data(zip_path)` restores a bundle to the user who created it (creating that user if it doesn't exist) and overwrites that user's existing data, without changing the current user.
+- **C SDK**: Added user data import/export, mirroring the Python API. `wuji_user_data_export` / `wuji_user_data_preview` / `wuji_user_data_import` move a user's data as a portable `.zip` bundle and return a `WujiStatus` — call `wuji_last_error()` for the message on failure. They report the specific failure: `WUJI_STATUS_ERR_NOT_FOUND` when the bundle file doesn't exist, and `WUJI_STATUS_ERR_INVALID_DATA` when the bundle is present but fails validation (corrupt zip, bad manifest, checksum mismatch, or unsafe path).
+- **Python SDK**: `SdkManager.scan()` now reports each discovered device's type. `DiscoveredDevice.device_type` returns a `DeviceType` enum (`WujiGlove`, `WujiHand2`, `WujiHand`, or `Unknown`), so you can tell what a device is before connecting. `Unknown` means the type was not available at scan time.
+- **C SDK**: Added device type at scan time. `WujiDiscovered.device_id` is now a `WujiDeviceType` (`WUJI_DEVICE_TYPE_WUJI_GLOVE` / `_WUJI_HAND_2` / `_WUJI_HAND` / `_UNKNOWN`) and `WujiDiscovered.model` carries the readable type string (e.g. `"WujiGlove"`), so you can tell what a device is before connecting.
+- **C SDK**: Added SDK user management and Wuji Glove IK calibration APIs matching the Python SDK behavior. C applications can create and switch SDK users, run calibration with structured feedback, cancel asynchronous calibration sessions, and receive the per-user calibrated URDF path. The calibration example provides the same in-place terminal dashboard and throttled API log mode as the Python example.
+- **Wuji Hand**: The real-time controller now exposes `get_actual_effort()` (per-joint effort in amps, read from the same non-blocking upstream cache as `get_actual_position()`) in the Python SDK, and the C SDK exposes the matching `wuji_hand_realtime_controller_get_actual_effort`.
+- **Wuji Hand**: Added Wuji Hand (first-generation dexterous hand) support to the C SDK. Connect by USB serial number (`wuji_hand_connect_sn`), then read joint positions, per-joint diagnostics (bus voltage / temperature / error code), firmware soft limits, handedness, and whether a tactile glove is attached. Control the hand with `enable` / `disable` / `clear_all_faults`, and set or read the effort limit. Stream commands through a joint-command publisher — a list of 20 `JointCommand` structs, one `position` / `velocity` / `effort` per joint, the same shape as Wuji Hand 2, so command code is portable between the two. Run a low-pass-filtered real-time position controller (`set_target_position` / `get_actual_position` / `get_actual_effort`). Subscription streams for joint state and tactile pressure are also available. Supported on **Linux x86_64 / aarch64 (gnu) only** — those tarballs ship `libwujihandcpp.so` alongside `libwuji_sdk_c.so`. Keep the two files in the same directory and it is found automatically (no `LD_LIBRARY_PATH` needed). `libstdc++.so.6` and `libusb-1.0.so.0` are the only runtime system dependencies. On the Android tarball these functions are present but return `WUJI_STATUS_ERR_UNSUPPORTED`. Worked examples are under `examples/c/wuji_hand/`.
+
+### Changed
+
+- **Wuji Hand — BREAKING (Python)**: The joint-command publisher now takes an array of structs. `JointCommandPublisher.send(...)` changed from three parallel lists `send(positions, velocities, efforts)` to a single list of per-joint commands `send(joints)`, where each entry is a `JointCommand(position, velocity, effort)` — pass exactly 20. The old `publish(...)` alias was removed. This matches Wuji Hand 2 exactly, so joint-command code is now portable between the two hands. Update any `send(positions, velocities, efforts)` / `publish(...)` call to `send([JointCommand(p, v, e), ...])`.
+- **Wuji Hand — BREAKING (Python)**: The joint-command publisher is now opened via `hand.joint_command().publish()`. The resource accessor was renamed from `.publisher()` to `.publish()`, and the shortcut method `hand.joint_command_publisher()` was removed — both to match Wuji Hand 2 exactly. The returned `JointCommandPublisher` (with `send(...)` / `close()`) is unchanged. Update `hand.joint_command().publisher()` or `hand.joint_command_publisher()` to `hand.joint_command().publish()`.
+- **Wuji Hand — BREAKING (Python)**: Tactile-glove classes now carry a `TactileGlove` prefix. The paired tactile glove's classes were renamed so they cannot be confused with the Wuji Glove's generic tactile streams: `TactileStatus` → `TactileGloveStatus`, `TactileDiagnostics` → `TactileGloveDiagnostics`, `TactileDeviceInfo` → `TactileGloveDeviceInfo`, and the sub-module handle `WujiTactile` → `WujiTactileGlove`. Accessors (`hand.tactile()`, `hand.tactile_status()`, …) and wire formats are unchanged — update type references and `isinstance` checks to the new class names.
+- **Wuji Hand — BREAKING (Python)**: The joint-state stream is now `hand.joint_states()`. The subscription accessor was renamed from `hand.joint_state()` to `hand.joint_states()`, and the frame class from `HandJointState` to `HandJointStates` — matching Wuji Hand 2 and the ROS `/joint_states` convention. Update `hand.joint_state().subscribe()` to `hand.joint_states().subscribe()` and any `HandJointState` type references to `HandJointStates`.
+- **Wuji Glove — BREAKING**: Hand calibration now belongs to the SDK user and hand side instead of an individual glove. Swapping to another glove of the same side no longer requires recalibration. Calibration recorded by older SDK versions is not loaded anymore — recalibrate under your user profile.
+- **Wuji Glove — BREAKING**: The `hand_profile` calibration option is deprecated and ignored (passing it emits a `DeprecationWarning`). The calibration result was simplified to `handedness` plus a single `calibrated_urdf` path. The `calibration.hand_profile` and `calibration.hand_model_paths.*` parameters were removed: setting them now fails, and values left by older versions are ignored.
+- **Wuji Glove — BREAKING**: The tactile contact model is now located automatically from the current SDK user and device serial number — the same convention as the calibrated hand model — and stored under the SDK's own tactile directory. The `algorithms.tactile_binary.model_dir` parameter was removed: setting it now fails, and values left by older versions are ignored. Integrations that set this parameter to point tactile contact detection at a model directory should stop setting it. The model is resolved automatically once you select the SDK user.
+- **Wuji Glove**: Calibration bundles use a new format with user-level hand models and per-glove tactile data. Importing bundles from older SDK versions keeps the tactile data but skips the old hand calibration (it is no longer loaded — recalibrate under your user profile). Bundles exported by this version require an up-to-date SDK to import.
+- **C SDK — BREAKING**: `WujiConnectOptions` changed layout to match Python `ConnectOptions` for bridge and background time-sync settings. Rebuild C applications against the updated `wuji_sdk.h`. Call `wuji_connect_options_default()` before overriding fields when passing non-NULL options to `wuji_connect`, or pass `opts_or_null = NULL` to keep default connection behavior.
+- **Retargeting**: Optimized wheel packaging — download and installed size are significantly smaller. No functional change.
+- **Wuji Hand 2**: `disconnect()` now fully releases the hand — after disconnecting, the hand is immediately available to any other application or machine, exactly as if your application had exited. Previously the hand could remain held by the application until it exited.
+
+### Removed
+
+- **C SDK — BREAKING**: Removed unused API `wuji_glove_subscribe_tactile_zones_cache()`.
+
+### Fixed
+
+- **Wuji Glove**: Setting a custom hand URDF under the default SDK user (semantic setters and generic SDK-param write paths) now fails with a clear error instead of silently having no effect — switch to a named SDK user first. The semantic setter also rejects unreadable paths immediately.
+- Fixed an issue where connecting multiple devices in the same process (for example a Wuji Glove and a Wuji Hand 2) could fail depending on the connection order.
+- **Wuji Hand 2**: Fixed a bug where applications that repeatedly connect and disconnect could see each new connection take longer than the last. Connections now stay consistently fast, no matter how long the application has been running.
 
 ## [2026.7.2]
 
@@ -182,7 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...HEAD
+[2026.7.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...v2026.7.14
 [2026.7.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...v2026.7.1
 [2026.6.18]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.16...v2026.6.18

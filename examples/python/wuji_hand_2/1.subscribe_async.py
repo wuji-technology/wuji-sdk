@@ -10,7 +10,7 @@ Usage: python 1.subscribe_async.py
 
 import asyncio
 
-from wuji_sdk import SdkManager, WujiHand2, JointStateFrame
+from wuji_sdk import SdkManager, DeviceType, WujiHand2, JointStateFrame
 
 
 async def print_joint_state(hand: WujiHand2):
@@ -36,11 +36,16 @@ async def main():
 
     print(f"Found {len(devices)} device(s)")
     for dev in devices:
-        print(f"  SN={dev.sn}, Address={dev.address}")
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+
+    hand_devices = [d for d in devices if d.device_type == DeviceType.WujiHand2]
+    if not hand_devices:
+        print("No Wuji Hand 2 found among the scanned devices")
+        return
 
     hands: list[WujiHand2] = []
     tasks = []
-    for i, dev in enumerate(devices):
+    for i, dev in enumerate(hand_devices):
         hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
         print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
         hands.append(hand)
@@ -48,7 +53,7 @@ async def main():
 
     print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
 
-    # 纯订阅反馈, 不驱动电机 → 无需 enable / disable。
+    # Feedback subscription only — no motor actuation, so no enable / disable needed.
     await asyncio.gather(*tasks)
 
 

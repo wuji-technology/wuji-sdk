@@ -19,7 +19,7 @@ Usage: python 2.publish.py
 import sys
 import time
 
-from wuji_sdk import JointCommand, SdkManager, WujiHand2
+from wuji_sdk import DeviceType, JointCommand, SdkManager, WujiHand2
 
 TOTAL_JOINTS = 20
 PUB_HZ = 200
@@ -34,7 +34,20 @@ EFFORT_LIMIT = 1.5  # Amps
 
 def main():
     manager = SdkManager.instance()
-    hand: WujiHand2 = manager.auto_connect(device_name="wuji_hand_2")
+    devices = manager.scan()
+    if not devices:
+        print("No devices found")
+        sys.exit(1)
+
+    for dev in devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+
+    hand_devices = [d for d in devices if d.device_type == DeviceType.WujiHand2]
+    if not hand_devices:
+        print("No Wuji Hand 2 found among the scanned devices")
+        sys.exit(1)
+
+    hand: WujiHand2 = manager.connect(sn=hand_devices[0].sn, device_name="wuji_hand_2")
 
     n_online = hand.online_joints_count().get()
     print(f"Connected: {hand.serial_number} ({n_online} joints online)")

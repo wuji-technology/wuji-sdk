@@ -12,6 +12,10 @@
  * back. The online IK streams reload the model through the SDK's existing
  * calibration-generation mechanism.
  *
+ * A custom hand model path requires a named SDK user. Under the default SDK
+ * user, online IK always uses the built-in default URDF, and the set call
+ * fails with an explanatory error (printed via `wuji_last_error()`).
+ *
  * Build: point CMake at your extracted SDK tarball (see ../README.md):
  *          cmake -S . -B build \
  *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
@@ -52,10 +56,15 @@ static void print_usage(const char *argv0) {
 }
 
 static int find_target(const WujiDiscovered *list, size_t n, const char *target_sn) {
-    if (!target_sn || !target_sn[0]) return n > 0 ? 0 : -1;
-
+    if (target_sn && target_sn[0]) {
+        for (size_t i = 0; i < n; i++) {
+            if (strcmp(list[i].serial_number, target_sn) == 0) return (int)i;
+        }
+        return -1;
+    }
+    /* No SN given: this is a Wuji Glove example, so pick the first glove. */
     for (size_t i = 0; i < n; i++) {
-        if (strcmp(list[i].serial_number, target_sn) == 0) return (int)i;
+        if (list[i].device_id == WUJI_DEVICE_TYPE_WUJI_GLOVE) return (int)i;
     }
     return -1;
 }
@@ -161,10 +170,18 @@ int main(int argc, char **argv) {
         wuji_shutdown();
         return 0;
     }
+    for (size_t i = 0; i < n; i++) {
+        printf("  SN=%s  Type=%s  Address=%s\n",
+               list[i].serial_number, list[i].model, list[i].address);
+    }
 
     int idx = find_target(list, n, target_sn);
     if (idx < 0) {
-        fprintf(stderr, "Device not found: %s\n", target_sn);
+        if (target_sn && target_sn[0]) {
+            fprintf(stderr, "Device not found: %s\n", target_sn);
+        } else {
+            fprintf(stderr, "No Wuji Glove found among the scanned devices\n");
+        }
         wuji_discovered_free(list, n);
         wuji_shutdown();
         return 1;

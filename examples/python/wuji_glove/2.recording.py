@@ -13,7 +13,7 @@ import asyncio
 import os
 from datetime import datetime
 
-from wuji_sdk import SdkManager, TopicRecorder
+from wuji_sdk import SdkManager, DeviceType, TopicRecorder
 
 
 async def main():
@@ -24,7 +24,15 @@ async def main():
         print("No devices found")
         return
 
-    glove = manager.connect(sn=devices[0].sn, device_name="glove_0")
+    for dev in devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+
+    gloves = [d for d in devices if d.device_type == DeviceType.WujiGlove]
+    if not gloves:
+        print("No Wuji Glove found among the scanned devices")
+        return
+
+    glove = manager.connect(sn=gloves[0].sn, device_name="glove_0")
     print(f"Connected: {glove.serial_number}")
 
     # Create a recorder with LZ4 compression

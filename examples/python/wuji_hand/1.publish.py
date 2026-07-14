@@ -13,7 +13,14 @@ Usage: python 1.publish.py
 import sys
 import time
 
-from wuji_sdk import HandJointState, LowPass, SdkManager, TransportType, WujiHand
+from wuji_sdk import (
+    DeviceType,
+    HandJointStates,
+    JointCommand,
+    LowPass,
+    SdkManager,
+    WujiHand,
+)
 
 TOTAL_JOINTS = 20
 PUB_HZ = 100
@@ -22,7 +29,7 @@ EFFORT_LIMIT = 1.5
 LOWPASS_CUTOFF_HZ = 5.0
 
 
-def print_joint_state(label: str, state: HandJointState):
+def print_joint_state(label: str, state: HandJointStates):
     thumb = state.position[:4]
     positions = [f"{p:+.3f}" for p in thumb]
     print(f"{label}: thumb_pos={positions}")
@@ -30,7 +37,10 @@ def print_joint_state(label: str, state: HandJointState):
 
 def main():
     manager = SdkManager.instance()
-    devices = [dev for dev in manager.scan() if dev.transport_type == TransportType.Usb]
+    all_devices = manager.scan()
+    for dev in all_devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+    devices = [dev for dev in all_devices if dev.device_type == DeviceType.WujiHand]
 
     if not devices:
         print("No Wuji Hand devices found")
@@ -51,8 +61,8 @@ def main():
 
         print(f"Starting LowPass controller ({LOWPASS_CUTOFF_HZ:.1f} Hz) ...")
         with hand.realtime_controller(LowPass(cutoff_hz=LOWPASS_CUTOFF_HZ)):
-            publisher = hand.joint_command().publisher()
-            zeros = [0.0] * TOTAL_JOINTS
+            publisher = hand.joint_command().publish()
+            zeros = [JointCommand(0.0, 0.0, 0.0)] * TOTAL_JOINTS
             dt = 1.0 / PUB_HZ
             end = time.monotonic() + HOLD_SECONDS
 
