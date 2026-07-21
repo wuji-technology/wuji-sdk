@@ -22,10 +22,13 @@ The Python SDK is the primary, full-featured interface. The C SDK exposes a C AP
 │   │   ├── wuji_glove/
 │   │   ├── wuji_hand/
 │   │   ├── wuji_hand_2/
-│   │   └── retargeting/     # map hand keypoints → joint commands (pip install wuji-sdk[retarget])
+│   │   └── retargeting/     # map hand keypoints → joint commands
 │   └── c/                   # C SDK docs (README) + examples (prebuilt tarball from Releases)
 │       ├── README.md
-│       └── wuji_glove/
+│       ├── wuji_glove/
+│       ├── wuji_hand/
+│       ├── wuji_hand_2/
+│       └── retargeting/
 ├── CHANGELOG.md             # Version history (Python + C SDK)
 ├── LICENSE
 └── README.md
