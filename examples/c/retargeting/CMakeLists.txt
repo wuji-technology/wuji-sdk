@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(wuji_sdk_c_hand2_example LANGUAGES C)
+project(wuji_sdk_c_retargeting_example LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -24,17 +24,16 @@ endif()
 # RPATH so built binaries find libwuji_sdk_c.so without LD_LIBRARY_PATH.
 get_filename_component(_wuji_sdk_lib_dir "${WUJI_SDK_LIB}" DIRECTORY)
 
-foreach(demo 0_subscribe_joint_states 1_control_motion 2_hand_info 3_fingertip)
+foreach(demo 0_retarget_session 1_teleop_real)
     add_executable(${demo} ${demo}.c)
     target_include_directories(${demo} PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
-    target_link_libraries(${demo} PRIVATE "${WUJI_SDK_LIB}")
+    target_link_libraries(${demo} PRIVATE "${WUJI_SDK_LIB}" pthread)
     target_compile_options(${demo} PRIVATE -Wall -Wextra -O2)
     set_target_properties(${demo} PROPERTIES
         BUILD_RPATH   "${_wuji_sdk_lib_dir}"
         INSTALL_RPATH "\$ORIGIN/../../../../lib"
     )
 endforeach()
-target_link_libraries(1_control_motion PRIVATE m)  # sinf()/cosf()
 
 message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
 message(STATUS "WUJI_SDK_LIB         = ${WUJI_SDK_LIB}")

@@ -7,16 +7,16 @@ Hand joint command (20 values). This is the low-level building block: you supply
 the keypoints from any source (camera, glove replay, a VR headset, ...), and get
 back a joint command ready to send to the hand.
 
-Install the retargeting runtime dependencies first:
+Install the retargeting runtime dependencies first (numpy for keypoint/qpos arrays):
 
-    pip install "wuji-sdk[retarget]"
+    pip install wuji-sdk numpy
 
 Usage: python 0.retarget_session.py
 """
 
 import numpy as np
 
-from wuji_sdk import Handedness, retargeting
+from wuji_sdk import HandModel, Handedness, RetargetSession
 
 
 def make_open_hand_keypoints() -> np.ndarray:
@@ -38,8 +38,8 @@ def main() -> int:
     # tuning config internally, so you don't deal with config paths. The session
     # keeps warm-start and smoothing state across frames, so reuse it in your loop.
     # (Models: HandModel.WujiHand or HandModel.WujiHand2.)
-    session = retargeting.RetargetSession.for_hand(
-        retargeting.HandModel.WujiHand2, side=Handedness.Right
+    session = RetargetSession.for_hand(
+        HandModel.WujiHand2, side=Handedness.Right
     )
 
     keypoints = make_open_hand_keypoints()

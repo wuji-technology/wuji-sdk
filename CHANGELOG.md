@@ -7,6 +7,24 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
+## [2026.7.21]
+
+### Added
+
+- **Wuji Hand 2**: First official release of fingertip tactile sensing — subscribe to self-describing per-finger sensor streams (`FingertipSensorInfo` metadata describes how to decode each `FingertipSensorData` frame — see the `3.fingertip_typed.py` example), recalibrate all five fingertips to a fresh zero baseline with `hand.tactile_calibrate()` (Python) / `wuji_hand_2_tactile_calibrate(dev)` (C) while keeping the sensor surfaces unloaded, and query each sensor's model and calibration state with `hand.tactile_status(finger)` to confirm a recalibration has finished.
+- **C SDK**: Added the hand retargeting API (`wuji_retarget_session_create` / `_step` / `_reset` / `_free`) — maps 21 hand keypoints (MediaPipe order) to 20 joint angles in firmware order, matching the Python `RetargetSession`. Degenerate or invalid keypoint frames return the new `WUJI_STATUS_ERR_ALGORITHM` status (details via `wuji_last_error()`).
+
+### Changed
+
+- Hand retargeting now runs on a native implementation: the `[retarget]` extra (`scipy`, `nlopt`, `pin`, `pyyaml`) is no longer required — `RetargetSession` works out of the box with lower per-step latency. `numpy` is still used for keypoint/qpos arrays.
+- Retargeting output has been refined — notably improved thumb articulation. Joint angles for identical inputs may differ from previous releases.
+- **BREAKING (Python)**: `RetargetSession` and `HandModel` now live at the package top level, and the `wuji_sdk.retargeting` submodule is removed — `from wuji_sdk.retargeting import RetargetSession, HandModel` no longer imports. Update imports to `from wuji_sdk import RetargetSession, HandModel`.
+
+### Fixed
+
+- **Wuji Hand 2**: Firmware upgrade failures now report the detailed error (specific reason, error code, and any failed nodes) instead of a generic "Unknown error".
+- **Wuji Hand**: Connecting to a hand that's on the USB bus but not responding now returns a clear initialization error with the underlying cause, instead of misreporting the device as not found. This covers both the Python SDK (connect by serial number) and the C SDK (`wuji_hand_connect_sn`).
+
 ## [2026.7.14]
 
 ### Added
@@ -42,6 +60,7 @@ and this project uses calendar versioning (YYYY.M.D).
 - **Wuji Glove**: Setting a custom hand URDF under the default SDK user (semantic setters and generic SDK-param write paths) now fails with a clear error instead of silently having no effect — switch to a named SDK user first. The semantic setter also rejects unreadable paths immediately.
 - Fixed an issue where connecting multiple devices in the same process (for example a Wuji Glove and a Wuji Hand 2) could fail depending on the connection order.
 - **Wuji Hand 2**: Fixed a bug where applications that repeatedly connect and disconnect could see each new connection take longer than the last. Connections now stay consistently fast, no matter how long the application has been running.
+- **Python SDK**: Fixed a crash on exit. If a device disconnected while a callback subscription was still running and the process then exited, the app could crash with a fatal Python error or segmentation fault. Background subscription threads now stop cleanly before the interpreter shuts down.
 
 ## [2026.7.2]
 
@@ -75,7 +94,7 @@ and this project uses calendar versioning (YYYY.M.D).
   - **Typed reads auto-decode** — no manual byte parsing.
   - **Error lookup.** `describe_error(code)` turns a status / error code into a human-readable description.
 - **Wuji Hand 2 — BREAKING**: Changed the joint-command publisher to take an array of structs. `hand.joint_command().publish().send(...)` changed from three parallel lists `send(positions, velocities, efforts)` to a single list of per-joint commands `send(joints)`, where each entry is a `JointCommand(position, velocity, effort)`. Pass exactly 20 `JointCommand`. Update any `send(positions, velocities, efforts)` call accordingly.
-- **Wuji Hand 2 — `joint_states` / `joint_diagnostics` feedback frames now carry a `FrameHeader`** (`seq` + `timestamp_us` + `frame_id`), consistent with the IMU / tactile feedback frames. `timestamp_us` is the firmware send time and `frame_id` is `l_wrist` / `r_wrist` (filled by the firmware from its own handedness) for 3D hand-pose visualization. The previous top-level `seq` field moved into `header.seq`. Requires the matching firmware build.
+- **Wuji Hand 2 — `joint_states` / `joint_diagnostics` feedback frames now carry a `FrameHeader`** (`seq` + `timestamp_us` + `frame_id`), consistent with the IMU feedback frames. `timestamp_us` is the firmware send time and `frame_id` is `l_wrist` / `r_wrist` (filled by the firmware from its own handedness) for 3D hand-pose visualization. The previous top-level `seq` field moved into `header.seq`. Requires the matching firmware build.
 - **Wuji Glove**: Local params files are now saved in a cleaner canonical form. The SDK no longer persists generated defaults, empty values, deprecated fields, or runtime-only cache data; existing legacy hand profile fields are migrated to the current `wujihand` / `wujihand2` names, and params files with no persistent settings are removed on save. This only changes the on-disk config file shape; runtime hand-tracking behavior remains unchanged.
 - **Wuji Glove**: Updated the built-in default hand model — the fallback hand geometry used for hand-tracking output (`hand_skeleton`, `hand_joint_angles`, `tip_poses`) when no per-device hand profile is loaded. Finger-segment lengths and joint origins are refreshed to the latest calibration for more accurate default hand tracking; the joint/link layout is unchanged. Only affects sessions relying on the default (uncalibrated) hand model.
 
@@ -129,7 +148,7 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Added
 
 - **Wuji Glove**: `glove.sync_time()` — manually trigger a time sync and inspect the result (`offset_us`, `round_trip_us`, `synced_at_us`). The SDK also runs a 30 s background time sync after connect, configurable via `ConnectOptions.auto_time_sync_interval_ms` (pass `None` to disable, or any value `>= 100` ms to override the default). Requires firmware > 0.10.1.
-- **Wuji Hand 2**: Initial public release — auto-discovery and connection, motor enable/disable, MIT impedance control parameters, real-time joint state subscription (20 joints, position/velocity/torque), multi-finger tactile sensor stream, joint fault clearing, and per-joint diagnostics (bus voltage, temperature, fault codes)
+- **Wuji Hand 2**: Initial public release — auto-discovery and connection, motor enable/disable, MIT impedance control parameters, real-time joint state subscription (20 joints, position/velocity/torque), joint fault clearing, and per-joint diagnostics (bus voltage, temperature, fault codes)
 
 ## [0.10.0] - 2026-05-15
 
@@ -218,7 +237,8 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...HEAD
+[2026.7.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...v2026.7.21
 [2026.7.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...v2026.7.14
 [2026.7.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.6.18...v2026.7.1

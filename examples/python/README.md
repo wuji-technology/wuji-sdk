@@ -50,23 +50,31 @@ More examples: [examples/python/](https://github.com/wuji-technology/wuji-sdk/tr
 
 ## Retargeting
 
-Map human hand keypoints to Wuji Hand joint commands. Install the runtime dependencies first:
+Map human hand keypoints to Wuji Hand joint commands. Retargeting works out of the box — numpy is the only extra dependency (keypoint/qpos arrays):
 
 ```bash
-pip install "wuji-sdk[retarget]"
+pip install wuji-sdk numpy
 ```
 
 The SDK exposes the pure retarget interface — one frame at a time, supply keypoints from any source:
 
 ```python
 import numpy as np
-from wuji_sdk import Handedness, retargeting
+from wuji_sdk import Handedness, HandModel, RetargetSession
 
 # The hand model selects the builtin tuning config internally — no config path to manage.
-session = retargeting.RetargetSession.for_hand(
-    retargeting.HandModel.WujiHand2, side=Handedness.Right
-)
-qpos = session.step(np.zeros((21, 3), dtype=np.float32))  # -> (20,) joint command (firmware order)
+session = RetargetSession.for_hand(HandModel.WujiHand2, side=Handedness.Right)
+
+# A synthetic open right hand, (21, 3) in meters, MediaPipe landmark order —
+# replace with your real keypoint source (camera / glove / replay).
+# (All-zero / degenerate frames are rejected with an exception.)
+keypoints = np.zeros((21, 3), dtype=np.float32)
+for finger, x in enumerate([-0.04, -0.03, -0.01, 0.01, 0.03]):  # thumb..pinky
+    for k in range(4):
+        keypoints[1 + finger * 4 + k] = [x, 0.03 * (k + 1), 0.0]
+keypoints[1] = [-0.03, 0.02, 0.01]  # thumb CMC nearer the palm
+
+qpos = session.step(keypoints)  # -> (20,) joint command (firmware order)
 ```
 
 Driving a hand live (read → retarget → send) is plain application code built on

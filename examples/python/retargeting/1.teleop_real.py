@@ -9,9 +9,8 @@ drive a connected Wuji Hand or Wuji Hand 2.
 
 To drive from a different keypoint source (camera / MediaPipe / VR), replace the
 glove read with your own: ``RetargetSession.step`` accepts any ``(21, 3)`` float32
-array of MediaPipe-format landmarks and returns a 20-value joint command already
-in firmware order (the per-model joint-order permutation is applied inside the
-SDK), so the result is sent to the hand as-is.
+array of MediaPipe-format landmarks and returns a 20-value joint command in
+firmware order, so the result is sent to the hand as-is.
 
 The session is built with ``RetargetSession.for_hand(model, side=SIDE)`` — the hand
 model selects the builtin tuning config internally, so there is no config path to
@@ -21,19 +20,17 @@ shown here in configure_wuji_hand_2 / configure_wuji_hand.
 This example is set up for a **right**-hand rig (glove + hand). For a left-hand
 setup, change ``SIDE`` below — it picks the retargeter's handedness basis.
 
-This example deliberately runs the **glove** on the SDK built-in default hand
-URDF rather than a per-user IK calibration: per-user calibration still has some
-rough edges, and the built-in model currently gives more reliable teleop. It
+This example runs the **glove** on the SDK built-in default hand URDF: it
 switches to the default SDK user before connecting — the default user runs the
 glove on the built-in default hand URDF — and restores the previously selected
-user on exit. See ``use_builtin_urdf_user``. If the built-in URDF doesn't track
-your hand well, create a non-default SDK user, switch to it, then calibrate the
-glove under it — calibrating under the default user has no effect, since the
-default user always runs on the built-in URDF.
+user on exit. See ``use_builtin_urdf_user``. Use a named SDK user to run with a
+calibrated hand model: create one, switch to it, then calibrate the glove under
+it — calibrating under the default user has no effect, since the default user
+always runs on the built-in URDF.
 
-Install the retargeting runtime dependencies first:
+Install the retargeting runtime dependencies first (numpy for keypoint/qpos arrays):
 
-    pip install "wuji-sdk[retarget]"
+    pip install wuji-sdk numpy
 
 Usage:
     python 1.teleop_real.py
@@ -46,12 +43,13 @@ import numpy as np
 
 from wuji_sdk import (
     DeviceType,
+    HandModel,
     Handedness,
     JointCommand,
     LowPass,
+    RetargetSession,
     SdkManager,
     WujiHand2,
-    retargeting,
 )
 
 FPS = 120  # target loop rate (ceiling); a slow frame lowers the rate, never bursts.
@@ -66,14 +64,14 @@ def configure_wuji_hand_2(hand):
     hand.effort_limit().set(1.5)  # Amps, broadcast to all joints
     hand.mit_params().set((3.0, 0.05))  # (kp, kd) tuple, broadcast to all joints
     hand.enable()
-    return retargeting.HandModel.WujiHand2
+    return HandModel.WujiHand2
 
 
 def configure_wuji_hand(hand):
     """Configure + enable a first-gen Wuji Hand; return the retarget HandModel."""
     hand.set_all_effort_limit(1.5)  # Amps
     hand.enable()
-    return retargeting.HandModel.WujiHand
+    return HandModel.WujiHand
 
 
 def use_builtin_urdf_user(manager):
@@ -110,13 +108,11 @@ def read_keypoints(skeleton_sub):
 def teleop(glove, model, send):
     """Build the retargeting session + glove source, then loop read → retarget → send.
 
-    Called *after* the hand's command channel is already open (see main). Building
-    the session (RetargetSession.for_hand) is a heavy, multi-second call; opening
-    the command channel is a blocking device round-trip. Doing the round-trip first
-    (on idle CPU, right after enable) keeps the just-enabled hand responsive, so the
-    session build here does not race a heartbeat/round-trip timeout.
+    Called *after* the hand's command channel is already open (see run_teleop):
+    open the command channel before session initialization so device
+    communication remains active during setup.
     """
-    session = retargeting.RetargetSession.for_hand(model, side=SIDE)
+    session = RetargetSession.for_hand(model, side=SIDE)
     skeleton_sub = glove.hand_skeleton().subscribe()
 
     budget = 1.0 / FPS
@@ -164,11 +160,9 @@ def run_teleop(manager) -> int:
 
     print("Teleoperating (Ctrl+C to stop)...")
     try:
-        # Open the hand's command channel FIRST — right after enabling the motors,
-        # before teleop() builds the heavy retargeting session. Opening the channel
-        # is a blocking device round-trip; doing it up front (while the just-enabled
-        # hand is responsive) avoids a round-trip/heartbeat timeout during the
-        # multi-second session build.
+        # Open the hand's command channel first — before teleop() builds the
+        # retargeting session — so device communication remains active during
+        # setup.
         if is_hand2:
             # Wuji Hand 2: send MIT position commands via the joint_command publisher.
             # send() takes one JointCommand per joint; position only (velocity/effort 0).
@@ -195,10 +189,10 @@ def run_teleop(manager) -> int:
 def main() -> int:
     manager = SdkManager.instance()
 
-    # Run the glove on the SDK built-in default hand URDF — per-user IK
-    # calibration still has rough edges, so the built-in model gives more
-    # reliable teleop. The default SDK user uses the built-in URDF, so switch to
-    # it before connecting and restore the previous user on exit.
+    # Run the glove on the SDK built-in default hand URDF: the default SDK user
+    # uses the built-in URDF, so switch to it before connecting and restore the
+    # previous user on exit. Use a named SDK user to run with a calibrated hand
+    # model.
     previous_user = use_builtin_urdf_user(manager)
     exit_code = 0
     try:
