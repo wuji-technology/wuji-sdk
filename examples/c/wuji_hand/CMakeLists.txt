@@ -10,10 +10,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 #     -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
 #     -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
 #
-# IMPORTANT: Wuji Hand is supported by the Linux x86_64 / aarch64 (gnu)
-# tarballs only (libwujihandcpp.so ships next to libwuji_sdk_c.so). On other
-# builds these functions return WUJI_STATUS_ERR_UNSUPPORTED and the examples
-# exit cleanly.
+# NOTE: Wuji Hand support is validated on the Linux x86_64 / aarch64 (gnu)
+# tarballs. The driver is built into libwuji_sdk_c.so — nothing else to deploy.
+# The examples exit cleanly when no hand is connected.
 set(WUJI_SDK_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../include" CACHE PATH
     "Directory containing wuji_sdk.h")
 set(WUJI_SDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/../../../lib/libwuji_sdk_c.so" CACHE FILEPATH

@@ -7,6 +7,36 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
+## [2026.8.3]
+
+### Added
+
+- **Wuji Hand 2**: The `joint_diagnostics` stream now carries built-in communication health — each joint reports its bus response rate and timeout count, and every frame includes a summary with end-to-end (Ethernet) stream loss, request retry/timeout counters, and the fingertip tactile online bitmap. The SDK maintains all of it automatically in the background, so no polling is required.
+- **Wuji Glove**: Added guided tactile calibration — record prompted hand motions to train a per-glove contact model for real-time contact detection (`tactile_binary`). Python: `glove.calibrate_tactile()` / `glove.calibrate_tactile_blocking()`. C: blocking guided flow with pose-prompt callbacks.
+
+  Models load automatically. Training requires a `model-export` build — see the motion guide at https://docs.wuji.tech/docs/en/wuji-studio/latest/tactile-calibration/.
+- **C SDK**: Added `wuji_glove_set_tactile_binary_sensitivity` for standalone `tactile_binary` observation tools. It changes the SDK-local contact sensitivity for the connected glove and rejects non-finite or non-positive values.
+- **C SDK**: Added the runnable user-management example `examples/c/wuji_glove/3_user_management.c` for inspecting the current SDK user, creating or updating named users, and switching users before calibration.
+- **Wuji Glove**: Added `tactile_residual` observation examples — the continuous signed signal behind `tactile_binary`, where you set your own contact threshold instead of using a built-in one. Python: `glove.tactile_residual()`, C: `wuji_glove_subscribe_tactile_residual` typed callback. Calibrate the glove first.
+
+### Changed
+
+- **Wuji Glove**: The C IK calibration example is now `examples/c/wuji_glove/4_user_calibration.c` (renamed from `3_user_calibration.c`) and calibrates the SDK user you are already on instead of creating or switching one — use the new `3_user_management.c` example first if you need to create or switch users. It also gained a `--blocking` mode, which runs calibration to completion without the cooperative Ctrl+C cancellation the default asynchronous path offers.
+- **Wuji Hand 2 — BREAKING (C)**: The joint diagnostics structs gained new fields, so their C ABI changed. Applications that use `WujiJointDiagnosticsEntry` or `WujiJointDiagnosticsFrame` must be recompiled against the new header before linking the new library — linking new against old will read and write past the end of the old structs. Existing fields keep their meaning and order, and no source changes are needed; the added fields carry the per-joint bus communication quality and the frame-level communication summary described above.
+- **Wuji Hand**: `RealtimeController` can now be shared across Python threads — for example a writer thread streaming targets while a reader thread polls actual positions — without any locking. Previously, touching the controller from a second thread raised an error.
+- **C SDK**: The Linux x86_64 and aarch64 (gnu) tarballs now ship one library file, `libwuji_sdk_c.so`. Wuji Hand support no longer needs the `libwujihandcpp.so` that earlier tarballs bundled beside it, and `libstdc++.so.6` and `libusb-1.0.so.0` are no longer runtime dependencies. The C API and link line are unchanged, so existing applications keep working without a rebuild. If you deployed `libwujihandcpp.so` from an earlier tarball, you can delete it — the SDK doesn't load it anymore.
+
+### Fixed
+
+- **Wuji Hand 2**: The SDK no longer binds a fixed local network port when connecting a hand. The local port is now assigned automatically by the operating system, so the SDK will not conflict with ports used by your own applications.
+- Device scanning no longer hangs indefinitely in the rare case where a network peer disappears during discovery. The network discovery step is now time-bounded, so scanning always returns within a few seconds with the devices found so far. Covers both the Python SDK and the C SDK.
+- Network device discovery now works on Linux hosts with multiple network interfaces or IP addresses when the host's primary IP address is not on the device's subnet — previously scanning on such hosts could permanently find no devices. Covers both the Python SDK and the C SDK.
+- **C SDK**: Wuji Hand tactile-glove calls no longer crash the process when the glove is missing or faulty — they return an error status instead (details via `wuji_last_error()`).
+- **Wuji Hand**: Connecting to a hand that isn't ready no longer crashes your application — it now fails with a catchable error that names any joint that didn't respond. Covers both the Python SDK and the C SDK.
+- **Wuji Hand 2**: Setting `effort_limit` to a value the device rejects (e.g. above the current ceiling) now raises a `ValueError` instead of a generic error; the device keeps its previous limit.
+- **Wuji Hand**: Physically unplugging the tactile glove at runtime is now detected. `is_tactile_attached()` returns `false`, the tactile status stream reports `NotPresent` (state 0) typically within 200 ms, and other tactile reads return a clear "tactile not present" error — previously they all kept reporting a healthy, attached glove indefinitely and only the frame age hinted at the loss. The hand itself is unaffected and keeps working; re-attaching the glove still requires reconnecting the hand. Applies to both the Python SDK and the C SDK (`wuji_hand_is_tactile_attached`).
+- **Wuji Glove**: EMF finger poses now use the selected hand URDF to reject unreachable mirrored positions, reducing incorrect position reversals caused by transient interference.
+
 ## [2026.7.21]
 
 ### Added
@@ -237,7 +267,8 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...HEAD
+[2026.8.3]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...v2026.8.3
 [2026.7.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...v2026.7.21
 [2026.7.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...v2026.7.14
 [2026.7.2]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.1...v2026.7.2

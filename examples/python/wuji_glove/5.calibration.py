@@ -5,6 +5,9 @@ Wuji Glove IK calibration example.
 This example uses the SDK's remembered current local user. To create, inspect,
 or switch users, run 4.user.py first.
 
+For interactive calibration from a shell, use `wuji calib ik`. This example is
+the reference for applications that integrate the SDK calibration API.
+
 Calibration produces one hand model per side for the current SDK user
 (left_hand.urdf / right_hand.urdf). Any glove of the same side connected under
 the same user loads the same model.

@@ -7,11 +7,15 @@ fingertip/<finger>/data and decode each frame per the format — the layout is
 never hardcoded, it all comes from the info contract.
 Thumb has 40 points, the other fingers 34, streamed at 100 Hz.
 
+Displays one status line per finger, redrawn in place at 100 Hz; each cycle
+drains the subscription queue and shows the newest frame.
+
 Usage: python 3.fingertip_typed.py
 """
 import json
 import math
 import struct
+import sys
 import time
 
 import wuji_sdk
@@ -20,6 +24,7 @@ from wuji_sdk import DeviceType, SdkManager
 FINGERS = ["thumb", "index", "middle", "ring", "pinky"]
 CONTACT_N = 0.2          # a point counts as "in contact" when |F| exceeds this (newtons)
 DURATION = 15            # seconds to run
+REFRESH_S = 0.01         # 100 Hz display refresh, matching the stream rate
 # contract field type -> struct format char; unknown types raise, never guess
 FIELD_FMT = {"i8": "<b", "u8": "<B", "i16": "<h", "u16": "<H",
              "i32": "<i", "u32": "<I", "f32": "<f"}
@@ -62,7 +67,7 @@ def force(p):
 
 
 def main():
-    wuji_sdk.set_log_level("warn")
+    wuji_sdk.set_log_level("error")
     manager = SdkManager.instance()
     devices = [d for d in manager.scan() if d.device_type == DeviceType.WujiHand2]
     if not devices:
@@ -89,18 +94,36 @@ def main():
     }
 
     print(f"\nSubscribed to 5 finger streams, running {DURATION}s (Ctrl+C to stop)\n")
+    latest = {name: None for name in FINGERS}
+    lines_ready = False
     t0 = time.monotonic()
+    next_tick = t0
     try:
         while time.monotonic() - t0 < DURATION:
             for name, sub in subs.items():
-                frame = sub.recv()
+                while (frame := sub.recv()) is not None:
+                    latest[name] = frame
+            lines = []
+            for name in FINGERS:
+                frame = latest[name]
                 if frame is None:
+                    lines.append(f"{name:<7} waiting for data...")
                     continue
                 points, agg = decoders[name](bytes(frame.data))
                 contacts = sum(1 for p in points if force(p) > CONTACT_N)
-                print(f"{name:<7} {len(points):>2}pt  temp={agg['temperature']:5.1f}C  "
-                      f"force=({agg['fx']:+6.2f},{agg['fy']:+6.2f},{agg['fz']:+6.2f})N  contacts={contacts}")
-            time.sleep(0.2)
+                lines.append(f"{name:<7} {len(points):>2}pt  temp={agg['temperature']:5.1f}C  "
+                             f"force=({agg['fx']:+6.2f},{agg['fy']:+6.2f},{agg['fz']:+6.2f})N  contacts={contacts}")
+            if lines_ready:
+                sys.stdout.write(f"\x1b[{len(FINGERS)}A")
+            sys.stdout.write("".join(f"\x1b[2K{line}\n" for line in lines))
+            sys.stdout.flush()
+            lines_ready = True
+            next_tick += REFRESH_S
+            delay = next_tick - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                next_tick = time.monotonic()  # fell behind; don't try to catch up
     except KeyboardInterrupt:
         pass
     finally:
