@@ -1,14 +1,25 @@
 #define _POSIX_C_SOURCE 199309L
 
 /*
- * Wuji SDK C - SDK user management and WujiGlove IK calibration.
+ * Wuji SDK C - Wuji Glove IK calibration for the current SDK user.
  *
- * This example creates or reuses a named SDK user, switches to that user,
- * connects to a Wuji Glove, and runs IK calibration with structured feedback.
+ * This example uses the SDK's remembered current local user, connects to a
+ * Wuji Glove, and runs IK calibration with structured feedback.
  *
- * Run: ./build/3_user_calibration [--mode terminal|api] <user_name> [serial_number]
+ * For interactive calibration from a shell, use `wuji calib ik`. This example
+ * is the reference for applications that integrate the SDK calibration API.
+ * Run 3_user_management first to create or switch the current SDK user.
+ *
+ * The default asynchronous mode requests cooperative cancellation on Ctrl+C.
+ * The --blocking convenience API has no external cancellation entry point, so
+ * Ctrl+C cannot cooperatively cancel that mode.
+ *
+ * Run: ./build/4_user_calibration [--sn serial_number]
+ *      ./build/4_user_calibration --mode api [--sn serial_number]
+ *      ./build/4_user_calibration --blocking [--sn serial_number]
  */
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include <signal.h>
 #include <stdint.h>
@@ -28,6 +39,17 @@ typedef enum CalibrationDisplayMode {
 
 typedef struct CalibrationDisplay CalibrationDisplay;
 
+typedef struct ExampleArgs {
+    const char *sn;
+    const char *device_name;
+    CalibrationDisplayMode mode;
+    bool blocking;
+    bool dry_run;
+    bool skip_constraints;
+    double timeout_s;
+    int log_level;
+} ExampleArgs;
+
 static void calibration_display_init(
     CalibrationDisplay *display,
     CalibrationDisplayMode mode);
@@ -40,7 +62,7 @@ static void calibration_display_callback(
     void *user_data);
 
 /* =============================================================================
- * SDK API usage: user selection, device connection, async calibration, and cancel
+ * SDK API usage: current user, device connection, calibration, and cancel
  * ============================================================================= */
 
 static volatile sig_atomic_t g_stop = 0;
@@ -49,13 +71,8 @@ static void on_sigint(int sig) {
     (void)sig;
     g_stop = 1;
 }
-static int find_target(const WujiDiscovered *list, size_t n, const char *target_sn) {
-    if (target_sn && target_sn[0]) {
-        for (size_t i = 0; i < n; i++) {
-            if (strcmp(list[i].serial_number, target_sn) == 0) return (int)i;
-        }
-        return -1;
-    }
+
+static int find_first_glove(const WujiDiscovered *list, size_t n) {
     for (size_t i = 0; i < n; i++) {
         if (list[i].device_id == WUJI_DEVICE_TYPE_WUJI_GLOVE) return (int)i;
     }
@@ -70,168 +87,244 @@ static const char *handedness_name(WujiHandedness side) {
     }
 }
 
-static int switch_or_create_user(const char *display_name) {
-    WujiUserInfo *users = NULL;
-    size_t user_count = 0;
-    WujiStatus st = wuji_list_users(&users, &user_count);
+static const char *device_type_name(WujiDeviceType type) {
+    switch (type) {
+        case WUJI_DEVICE_TYPE_WUJI_GLOVE: return "DeviceType.WujiGlove";
+        case WUJI_DEVICE_TYPE_WUJI_HAND_2: return "DeviceType.WujiHand2";
+        case WUJI_DEVICE_TYPE_WUJI_HAND: return "DeviceType.WujiHand";
+        default: return "DeviceType.Unknown";
+    }
+}
+
+static const char *optional_text(const char *value) {
+    return value ? value : "None";
+}
+
+static int print_current_user(void) {
+    WujiUserInfo user = {0};
+    WujiStatus st = wuji_current_user(&user);
     if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_list_users failed: %s\n", wuji_last_error());
+        fprintf(stderr, "Error: %s\n", wuji_last_error());
         return -1;
     }
 
-    const char *user_id = NULL;
-    for (size_t i = 0; i < user_count; i++) {
-        if (users[i].display_name && strcmp(users[i].display_name, display_name) == 0) {
-            user_id = users[i].user_id;
-            break;
-        }
+    printf("current SDK user:\n");
+    printf("  user_id:      '%s'\n", optional_text(user.user_id));
+    printf("  display_name: %s\n", optional_text(user.display_name));
+    printf("  description:  %s\n", optional_text(user.description));
+    printf("  is_default:   %s\n", user.is_default ? "True" : "False");
+    printf("\nCalibration results are stored per SDK user and hand side.\n");
+    if (user.is_default) {
+        printf(
+            "\nYou are on the default SDK user, which cannot run calibration.\n"
+            "Create and switch to a user profile first, e.g.:\n"
+            "    ./build/3_user_management --user-name user1\n"
+            "then re-run this example.\n");
     }
-
-    if (user_id) {
-        WujiUserInfo current = {0};
-        st = wuji_switch_user(user_id, &current);
-        if (st != WUJI_STATUS_OK) {
-            fprintf(stderr, "wuji_switch_user failed: %s\n", wuji_last_error());
-            wuji_user_info_array_free(users, user_count);
-            return -1;
-        }
-        printf("Using SDK user: %s (%s)\n", current.display_name, current.user_id);
-        wuji_user_info_free(&current);
-        wuji_user_info_array_free(users, user_count);
-        return 0;
-    }
-
-    wuji_user_info_array_free(users, user_count);
-
-    WujiUserInfo created = {0};
-    st = wuji_create_user(display_name, "C SDK calibration example", NULL, &created);
-    if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_create_user failed: %s\n", wuji_last_error());
-        return -1;
-    }
-
-    WujiUserInfo current = {0};
-    st = wuji_switch_user(created.user_id, &current);
-    if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_switch_user failed: %s\n", wuji_last_error());
-        wuji_user_info_free(&created);
-        return -1;
-    }
-    printf("Created SDK user: %s (%s)\n", current.display_name, current.user_id);
-    wuji_user_info_free(&created);
-    wuji_user_info_free(&current);
+    wuji_user_info_free(&user);
     return 0;
 }
 
-static void print_usage(const char *program) {
+static void print_usage(FILE *stream, const char *program) {
     fprintf(
-        stderr,
-        "Usage: %s [--mode terminal|api] <user_name> [serial_number]\n",
+        stream,
+        "Usage: %s [--sn serial_number] [--device-name name]\n"
+        "          [--mode terminal|api] [--blocking] [--dry-run]\n"
+        "          [--skip-constraints] [--timeout-s seconds]\n"
+        "          [--log-level trace|debug|info|warn|warning|error|off]\n",
         program);
 }
 
-int main(int argc, char **argv) {
-    signal(SIGINT, on_sigint);
+static int parse_log_level(const char *value, int *out) {
+    if (strcmp(value, "trace") == 0) *out = 5;
+    else if (strcmp(value, "debug") == 0) *out = 4;
+    else if (strcmp(value, "info") == 0) *out = 3;
+    else if (strcmp(value, "warn") == 0 || strcmp(value, "warning") == 0) *out = 2;
+    else if (strcmp(value, "error") == 0) *out = 1;
+    else if (strcmp(value, "off") == 0) *out = 0;
+    else return -1;
+    return 0;
+}
 
-    CalibrationDisplayMode display_mode = CALIBRATION_DISPLAY_TERMINAL;
-    int arg_index = 1;
-    if (argc >= 2 && strcmp(argv[1], "--mode") == 0) {
-        if (argc < 4) {
-            print_usage(argv[0]);
-            return 2;
-        }
-        if (strcmp(argv[2], "terminal") == 0) {
-            display_mode = CALIBRATION_DISPLAY_TERMINAL;
-        } else if (strcmp(argv[2], "api") == 0) {
-            display_mode = CALIBRATION_DISPLAY_API;
+static int option_value(int argc, char **argv, int *index, const char **out) {
+    if (*index + 1 >= argc) return -1;
+    *out = argv[++(*index)];
+    return 0;
+}
+
+static int parse_args(int argc, char **argv, ExampleArgs *args) {
+    *args = (ExampleArgs){
+        .device_name = "my_glove",
+        .mode = CALIBRATION_DISPLAY_TERMINAL,
+        .timeout_s = 900.0,
+        .log_level = 2,
+    };
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        const char *value = NULL;
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            print_usage(stdout, argv[0]);
+            return 1;
+        } else if (strcmp(arg, "--sn") == 0) {
+            if (option_value(argc, argv, &i, &args->sn) != 0) return -1;
+        } else if (strcmp(arg, "--device-name") == 0) {
+            if (option_value(argc, argv, &i, &args->device_name) != 0) return -1;
+        } else if (strcmp(arg, "--mode") == 0) {
+            if (option_value(argc, argv, &i, &value) != 0) return -1;
+            if (strcmp(value, "terminal") == 0) args->mode = CALIBRATION_DISPLAY_TERMINAL;
+            else if (strcmp(value, "api") == 0) args->mode = CALIBRATION_DISPLAY_API;
+            else return -1;
+        } else if (strcmp(arg, "--blocking") == 0) {
+            args->blocking = true;
+        } else if (strcmp(arg, "--dry-run") == 0) {
+            args->dry_run = true;
+        } else if (strcmp(arg, "--skip-constraints") == 0) {
+            args->skip_constraints = true;
+        } else if (strcmp(arg, "--timeout-s") == 0) {
+            if (option_value(argc, argv, &i, &value) != 0) return -1;
+            errno = 0;
+            char *end = NULL;
+            args->timeout_s = strtod(value, &end);
+            if (errno != 0 || !end || end == value || *end != '\0') return -1;
+        } else if (strcmp(arg, "--log-level") == 0) {
+            if (option_value(argc, argv, &i, &value) != 0 ||
+                parse_log_level(value, &args->log_level) != 0) {
+                return -1;
+            }
         } else {
-            print_usage(argv[0]);
-            return 2;
+            return -1;
         }
-        arg_index += 2;
     }
-    int remaining = argc - arg_index;
-    if (remaining < 1 || remaining > 2) {
-        print_usage(argv[0]);
-        return 2;
-    }
+    return 0;
+}
 
-    const char *user_name = argv[arg_index];
-    const char *target_sn = remaining == 2 ? argv[arg_index + 1] : NULL;
-
-    WujiInitOptions init = { .log_level = 2 };
-    if (wuji_init(&init) != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_init failed: %s\n", wuji_last_error());
-        return 1;
-    }
-
-    if (switch_or_create_user(user_name) != 0) {
-        wuji_shutdown();
-        return 1;
+static int connect_glove(const ExampleArgs *args, struct WujiDevice **out_dev) {
+    if (args->sn) {
+        printf("Connecting to Wuji Glove SN=%s...\n", args->sn);
+        WujiConnectTarget target = {
+            .kind = WUJI_CONNECT_TARGET_KIND_SN,
+            .value = args->sn,
+        };
+        WujiStatus st = wuji_connect(&target, args->device_name, NULL, out_dev);
+        if (st != WUJI_STATUS_OK) {
+            fprintf(stderr, "Error: %s\n", wuji_last_error());
+            return -1;
+        }
+        return 0;
     }
 
+    printf("Scanning for Wuji Glove...\n");
     WujiDiscovered *list = NULL;
-    size_t n = 0;
-    if (wuji_scan(&list, &n) != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_scan failed: %s\n", wuji_last_error());
-        wuji_shutdown();
-        return 1;
+    size_t count = 0;
+    WujiStatus st = wuji_scan(&list, &count);
+    if (st != WUJI_STATUS_OK) {
+        fprintf(stderr, "Error: %s\n", wuji_last_error());
+        return -1;
+    }
+    for (size_t i = 0; i < count; i++) {
+        printf(
+            "  SN=%s, Type=%s, Address=%s\n",
+            list[i].serial_number,
+            device_type_name(list[i].device_id),
+            list[i].address);
     }
 
-    int idx = find_target(list, n, target_sn);
-    if (idx < 0) {
-        fprintf(stderr, target_sn ? "Device not found: %s\n" : "No Wuji Glove found\n",
-                target_sn ? target_sn : "");
-        wuji_discovered_free(list, n);
-        wuji_shutdown();
-        return 1;
+    int index = find_first_glove(list, count);
+    if (index < 0) {
+        fprintf(stderr, "No Wuji Glove found among the scanned devices\n");
+        wuji_discovered_free(list, count);
+        return -1;
     }
 
     WujiConnectTarget target = {
         .kind = WUJI_CONNECT_TARGET_KIND_SN,
-        .value = list[idx].serial_number,
+        .value = list[index].serial_number,
     };
-
-    struct WujiDevice *dev = NULL;
-    WujiStatus st = wuji_connect(&target, "glove_calibration", NULL, &dev);
-    wuji_discovered_free(list, n);
+    st = wuji_connect(&target, args->device_name, NULL, out_dev);
+    wuji_discovered_free(list, count);
     if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_connect failed: %s\n", wuji_last_error());
-        wuji_shutdown();
-        return 1;
+        fprintf(stderr, "Error: %s\n", wuji_last_error());
+        return -1;
     }
+    return 0;
+}
 
-    WujiGloveCalibrationOptions options;
-    st = wuji_glove_calibration_options_default(&options);
-    if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "options default failed: %s\n", wuji_last_error());
-        wuji_dev_disconnect(dev);
-        wuji_dev_release(dev);
-        wuji_shutdown();
-        return 1;
+static void print_json_string(const char *value) {
+    if (!value) {
+        printf("null");
+        return;
     }
+    putchar('"');
+    for (const unsigned char *cursor = (const unsigned char *)value; *cursor; cursor++) {
+        switch (*cursor) {
+            case '"': printf("\\\""); break;
+            case '\\': printf("\\\\"); break;
+            case '\b': printf("\\b"); break;
+            case '\f': printf("\\f"); break;
+            case '\n': printf("\\n"); break;
+            case '\r': printf("\\r"); break;
+            case '\t': printf("\\t"); break;
+            default:
+                if (*cursor < 0x20) printf("\\u%04x", *cursor);
+                else putchar(*cursor);
+        }
+    }
+    putchar('"');
+}
 
-    CalibrationDisplay *display = calibration_display_create(display_mode);
-    if (!display) {
-        fprintf(stderr, "failed to initialize calibration display\n");
-        wuji_dev_disconnect(dev);
-        wuji_dev_release(dev);
-        wuji_shutdown();
-        return 1;
+static void print_result(const WujiGloveCalibrationResult *result) {
+    printf("\nCalibration result:\n{\n");
+    printf("  \"calibrated_urdf\": ");
+    print_json_string(result->calibrated_urdf);
+    printf(",\n  \"frames_per_pose\": ");
+    if (result->frames_per_pose_len == 0) {
+        printf("{}");
+    } else {
+        printf("{\n");
+        for (size_t i = 0; i < result->frames_per_pose_len; i++) {
+            printf("    ");
+            print_json_string(result->frames_per_pose[i].pose_name);
+            printf(
+                ": %u%s\n",
+                result->frames_per_pose[i].frames,
+                i + 1 == result->frames_per_pose_len ? "" : ",");
+        }
+        printf("  }");
     }
-    calibration_display_start(display);
+    printf(",\n  \"handedness\": ");
+    print_json_string(handedness_name(result->handedness));
+    printf(",\n  \"poses_collected\": %u,\n", result->poses_collected);
+    printf("  \"sdk_user\": {\n");
+    printf("    \"created_at\": ");
+    print_json_string(result->sdk_user.created_at);
+    if (result->sdk_user.description) {
+        printf(",\n    \"description\": ");
+        print_json_string(result->sdk_user.description);
+    }
+    printf(",\n    \"display_name\": ");
+    print_json_string(result->sdk_user.display_name);
+    if (result->sdk_user.external_id) {
+        printf(",\n    \"external_id\": ");
+        print_json_string(result->sdk_user.external_id);
+    }
+    printf(",\n    \"is_default\": %s", result->sdk_user.is_default ? "true" : "false");
+    printf(",\n    \"updated_at\": ");
+    print_json_string(result->sdk_user.updated_at);
+    printf(",\n    \"user_id\": ");
+    print_json_string(result->sdk_user.user_id);
+    printf("\n  }\n}\n");
+}
+
+static WujiStatus run_async_calibration(
+    struct WujiDevice *dev,
+    const WujiGloveCalibrationOptions *options,
+    CalibrationDisplay *display,
+    WujiGloveCalibrationResult *result) {
     WujiGloveCalibrationSession *session = NULL;
-    WujiGloveCalibrationResult result = {0};
-    st = wuji_glove_calibration_start(
-        dev, &options, calibration_display_callback, display, &session);
-    if (st != WUJI_STATUS_OK) {
-        calibration_display_destroy(display);
-        fprintf(stderr, "wuji_glove_calibration_start failed: %s\n", wuji_last_error());
-        wuji_dev_disconnect(dev);
-        wuji_dev_release(dev);
-        wuji_shutdown();
-        return 1;
-    }
+    WujiStatus st = wuji_glove_calibration_start(
+        dev, options, calibration_display_callback, display, &session);
+    if (st != WUJI_STATUS_OK) return st;
 
     bool done = false;
     bool cancel_requested = false;
@@ -243,34 +336,87 @@ int main(int argc, char **argv) {
             cancel_requested = true;
         }
 
-        st = wuji_glove_calibration_try_finish(session, &done, &result);
+        st = wuji_glove_calibration_try_finish(session, &done, result);
         if (st != WUJI_STATUS_OK || done) break;
         nanosleep(&poll_interval, NULL);
     }
+    wuji_glove_calibration_session_free(session);
+    return st;
+}
+
+int main(int argc, char **argv) {
+    ExampleArgs args;
+    int parse_status = parse_args(argc, argv, &args);
+    if (parse_status != 0) {
+        if (parse_status < 0) print_usage(stderr, argv[0]);
+        return parse_status < 0 ? 2 : 0;
+    }
+
+    signal(SIGINT, on_sigint);
+    WujiInitOptions init = { .log_level = args.log_level };
+    if (wuji_init(&init) != WUJI_STATUS_OK) {
+        fprintf(stderr, "Error: %s\n", wuji_last_error());
+        return 1;
+    }
+
+    if (print_current_user() != 0) {
+        wuji_shutdown();
+        return 1;
+    }
+    if (args.dry_run) {
+        printf("\nDry run complete: no device connection or calibration was performed.\n");
+        wuji_shutdown();
+        return 0;
+    }
+
+    struct WujiDevice *dev = NULL;
+    if (connect_glove(&args, &dev) != 0) {
+        wuji_shutdown();
+        return 1;
+    }
+
+    WujiGloveCalibrationOptions options;
+    WujiStatus st = wuji_glove_calibration_options_default(&options);
+    if (st != WUJI_STATUS_OK) {
+        fprintf(stderr, "Error: %s\n", wuji_last_error());
+        wuji_dev_disconnect(dev);
+        wuji_dev_release(dev);
+        wuji_shutdown();
+        return 1;
+    }
+    options.skip_constraints = args.skip_constraints;
+    options.timeout_s = args.timeout_s;
+
+    CalibrationDisplay *display = calibration_display_create(args.mode);
+    if (!display) {
+        fprintf(stderr, "Error: failed to initialize calibration display\n");
+        wuji_dev_disconnect(dev);
+        wuji_dev_release(dev);
+        wuji_shutdown();
+        return 1;
+    }
+    calibration_display_start(display);
+    WujiGloveCalibrationResult result = {0};
+    st = args.blocking
+             ? wuji_glove_calibrate(
+                   dev, &options, calibration_display_callback, display, &result)
+             : run_async_calibration(dev, &options, display, &result);
 
     calibration_display_stop(display);
     calibration_display_destroy(display);
     if (st != WUJI_STATUS_OK) {
-        fprintf(stderr, "calibration failed: %s\n", wuji_last_error());
-        wuji_glove_calibration_session_free(session);
+        if (st == WUJI_STATUS_ERR_CANCELLED) {
+            printf("\nCalibration cancelled.\n");
+        } else {
+            fprintf(stderr, "Error: %s\n", wuji_last_error());
+        }
         wuji_dev_disconnect(dev);
         wuji_dev_release(dev);
         wuji_shutdown();
         return st == WUJI_STATUS_ERR_CANCELLED ? 130 : 1;
     }
-    wuji_glove_calibration_session_free(session);
 
-    printf("Calibration complete: side=%s poses=%u urdf=%s user=%s\n",
-           handedness_name(result.handedness),
-           result.poses_collected,
-           result.calibrated_urdf ? result.calibrated_urdf : "",
-           result.sdk_user.display_name ? result.sdk_user.display_name : "");
-    for (size_t i = 0; i < result.frames_per_pose_len; i++) {
-        printf("  %s: %u frames\n",
-               result.frames_per_pose[i].pose_name,
-               result.frames_per_pose[i].frames);
-    }
-
+    print_result(&result);
     wuji_glove_calibration_result_free(&result);
     wuji_dev_disconnect(dev);
     wuji_dev_release(dev);
@@ -364,7 +510,10 @@ static const char *state_name(WujiGloveCalibrationState state) {
 static void progress_bar(double value, size_t width, char *out, size_t out_size) {
     if (!out || out_size == 0) return;
     if (width + 3 > out_size) width = out_size > 3 ? out_size - 3 : 0;
-    size_t done = (size_t)(clamp_progress(value) * (double)width + 0.5);
+    double scaled = clamp_progress(value) * (double)width;
+    size_t done = (size_t)scaled;
+    double fraction = scaled - (double)done;
+    if (fraction > 0.5 || (fraction == 0.5 && done % 2 != 0)) done++;
     if (done > width) done = width;
 
     size_t offset = 0;
@@ -380,17 +529,19 @@ static void elapsed_text(
     size_t out_size) {
     if (!out || out_size == 0) return;
     out[0] = '\0';
-    if (feedback->state == WUJI_GLOVE_CALIBRATION_STATE_COLLECTING &&
-        feedback->has_collect_elapsed && feedback->has_collect_target) {
-        snprintf(out, out_size, "%.1f/%.1fs", feedback->collect_elapsed, feedback->collect_target);
-    } else if (feedback->state == WUJI_GLOVE_CALIBRATION_STATE_WAITING_STABLE &&
-               feedback->has_hold_elapsed && feedback->has_hold_target) {
-        snprintf(out, out_size, "%.1f/%.1fs", feedback->hold_elapsed, feedback->hold_target);
+    if (feedback->state == WUJI_GLOVE_CALIBRATION_STATE_COLLECTING) {
+        double elapsed = feedback->has_collect_elapsed ? feedback->collect_elapsed : 0.0;
+        double target = feedback->has_collect_target ? feedback->collect_target : 0.0;
+        snprintf(out, out_size, "%.1f/%.1fs", elapsed, target);
+    } else if (feedback->state == WUJI_GLOVE_CALIBRATION_STATE_WAITING_STABLE) {
+        double elapsed = feedback->has_hold_elapsed ? feedback->hold_elapsed : 0.0;
+        double target = feedback->has_hold_target ? feedback->hold_target : 0.0;
+        snprintf(out, out_size, "%.1f/%.1fs", elapsed, target);
     }
 }
 
 static unsigned step_number(const WujiGloveCalibrationFeedback *feedback) {
-    return feedback->has_step_index ? feedback->step_index + 1 : 0;
+    return (feedback->has_step_index ? feedback->step_index : 0) + 1;
 }
 
 static unsigned step_total(const WujiGloveCalibrationFeedback *feedback) {
@@ -419,7 +570,7 @@ static void fallback_pose_title(const char *name, char *out, size_t out_size) {
             out[offset++] = ' ';
             capitalize = true;
         } else {
-            out[offset++] = (char)(capitalize ? toupper(*cursor) : *cursor);
+            out[offset++] = (char)(capitalize ? toupper(*cursor) : tolower(*cursor));
             capitalize = false;
         }
     }
@@ -479,15 +630,21 @@ static void build_diagnostics(
         const WujiGloveCalibrationMetric *metric = &feedback->metrics[i];
         if (!metric->has_error) continue;
 
-        const char *unit = metric->has_unit && metric->unit ? metric->unit : "";
+        const char *unit = !metric->has_unit ? "" : metric->unit ? metric->unit : "None";
         double scale = strcmp(unit, "m") == 0 ? 1000.0 : 1.0;
         double error = metric->error * scale;
         if (error <= 0.0001) continue;
         const char *display_unit = strcmp(unit, "m") == 0 ? "mm" : unit;
-        const char *label = metric->has_label && metric->label ? metric->label : "metric";
-        const char *finger = metric->has_finger && metric->finger ? metric->finger : "global";
-        const char *finger_b = metric->has_finger_b && metric->finger_b ? metric->finger_b : NULL;
-        const char *hint = metric->has_hint && metric->hint ? metric->hint : "adjust pose";
+        const char *label = !metric->has_label ? "metric" : metric->label ? metric->label : "None";
+        const char *finger = metric->has_finger && metric->finger && metric->finger[0]
+                                 ? metric->finger
+                                 : "global";
+        const char *finger_b = metric->has_finger_b && metric->finger_b && metric->finger_b[0]
+                                   ? metric->finger_b
+                                   : NULL;
+        const char *hint = !metric->has_hint
+                               ? "adjust pose"
+                               : metric->hint ? metric->hint : "None";
 
         MetricMessage *message = &messages[message_count++];
         message->order = i;
@@ -544,7 +701,6 @@ static unsigned terminal_width(void) {
         width = size.ws_col;
     }
     if (width > 100) width = 100;
-    if (width < 40) width = 40;
     return width;
 }
 
