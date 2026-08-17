@@ -20,13 +20,15 @@ shown here in configure_wuji_hand_2 / configure_wuji_hand.
 This example is set up for a **right**-hand rig (glove + hand). For a left-hand
 setup, change ``SIDE`` below — it picks the retargeter's handedness basis.
 
-This example runs the **glove** on the SDK built-in default hand URDF: it
-switches to the default SDK user before connecting — the default user runs the
-glove on the built-in default hand URDF — and restores the previously selected
-user on exit. See ``use_builtin_urdf_user``. Use a named SDK user to run with a
-calibrated hand model: create one, switch to it, then calibrate the glove under
-it — calibrating under the default user has no effect, since the default user
-always runs on the built-in URDF.
+Before connecting, the example lists the SDK users and lets you pick which one
+to run under (see ``select_user``); pressing Enter keeps the current user, and
+the previously selected user is restored on exit. The default user runs the
+**glove** on the SDK built-in default hand URDF; a named user runs it with that
+user's calibrated hand model, or on the built-in URDF as well when that user has
+no calibration yet. To teleoperate with a calibrated hand model, create a user
+and calibrate the glove under it first (``wuji_glove/4.user.py`` and
+``wuji_glove/5.calibration.py``) — calibrating under the default user has no
+effect, since the default user always runs on the built-in URDF.
 
 Install the retargeting runtime dependencies first (numpy for keypoint/qpos arrays):
 
@@ -74,15 +76,48 @@ def configure_wuji_hand(hand):
     return HandModel.WujiHand
 
 
-def use_builtin_urdf_user(manager):
-    """Switch to the default SDK user so the glove uses the built-in URDF.
+def select_user(manager):
+    """Interactively pick the SDK user to run under, and switch to it.
 
-    The default SDK user runs the glove on the built-in default hand URDF rather
-    than a per-user IK calibration. Returns the previously selected user so
-    main() can restore it on exit.
+    Switching happens before any device is connected, so the glove reads the
+    selected user's hand model. Returns the previously selected user so main()
+    can restore it on exit. Pressing Enter — or a closed stdin, as in a piped
+    run — keeps the current user.
     """
     previous = manager.current_user()
-    manager.switch_to_default_user()
+    users = manager.list_users()
+    print("SDK users:")
+    for i, user in enumerate(users):
+        tags = []
+        if user["is_default"]:
+            tags.append("built-in URDF")
+        if user["user_id"] == previous["user_id"]:
+            tags.append("current")
+        suffix = f" ({', '.join(tags)})" if tags else ""
+        print(f"  [{i}] {user['display_name']}{suffix}")
+
+    while True:
+        try:
+            choice = input(f"Select user [0-{len(users) - 1}], Enter keeps current: ").strip()
+        except EOFError:
+            print("No terminal input available — keeping the current SDK user.")
+            choice = ""
+        if not choice:
+            selected = previous
+            break
+        try:
+            index = int(choice)
+        except ValueError:
+            index = -1
+        # Reject negatives explicitly: users[-1] would silently pick the last user.
+        if not 0 <= index < len(users):
+            print(f"Invalid selection: {choice!r}")
+            continue
+        selected = users[index]
+        manager.switch_user(selected["user_id"])
+        break
+
+    print(f"Running as SDK user: {selected['display_name']}")
     return previous
 
 
@@ -189,11 +224,18 @@ def run_teleop(manager) -> int:
 def main() -> int:
     manager = SdkManager.instance()
 
-    # Run the glove on the SDK built-in default hand URDF: the default SDK user
-    # uses the built-in URDF, so switch to it before connecting and restore the
-    # previous user on exit. Use a named SDK user to run with a calibrated hand
-    # model.
-    previous_user = use_builtin_urdf_user(manager)
+    # Pick the SDK user to run under. This has to happen before connecting: the
+    # glove reads the selected user's hand model at connect time.
+    #
+    # Integrating this example and don't need user selection? Drop this call and
+    # the restore in the finally below — the SDK then keeps running as whatever
+    # user is currently selected.
+    try:
+        previous_user = select_user(manager)
+    except KeyboardInterrupt:
+        print()
+        return 130
+
     exit_code = 0
     try:
         exit_code = run_teleop(manager)

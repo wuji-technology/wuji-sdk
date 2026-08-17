@@ -7,6 +7,31 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
+## [2026.8.17]
+
+### Added
+
+- Added `Subscription.set_rate(frequency_hz)` to lower a subscribed stream's device push rate at runtime, in samples per second. Upgrade the device to firmware that supports stream rate control before using this method (Wuji Glove v0.11.4 or later, Wuji Hand 2 v2.3.0 or later). Pass 0 to restore the device default. The call returns the rate the device applies, which may be quantized. Supported on `emf_poses`, `tactile`, `tactile_zones`, and `imu_raw/*` (Wuji Glove) and on `joint_states`, `joint_diagnostics`, `imu`, and `fingertip/*/data` (Wuji Hand 2). Derived streams—including `hand_joint_angles`, `hand_skeleton`, `tip_poses`, and `imu_data/*`—follow their source rate and reject `set_rate`. The setting affects every subscriber of the stream and resets to the device default when the last subscription to the stream is closed or the device reconnects. Examples: `examples/python/wuji_glove/6.set_stream_rate.py` and `examples/c/wuji_glove/1_set_stream_rate.c` for the Wuji Glove, and `examples/python/wuji_hand_2/4.set_stream_rate.py` and `examples/c/wuji_hand_2/4_set_stream_rate.c` for the Wuji Hand 2.
+- **C SDK**: Added `wuji_sub_set_rate(sub, frequency_hz, out_actual_hz)` on any subscription handle, matching the Python `Subscription.set_rate` semantics. Streams that do not support rate control return `WUJI_STATUS_ERR_UNSUPPORTED (-8)` without sending a rate-control request to the device.
+
+### Changed
+
+- **Wuji Hand 2**: Printing a `JointDiagnosticsEntry` now shows `error_code_current` in hexadecimal (`0x2103`) instead of decimal (`8451`), matching how error codes are written in the documentation. `error_code().get()` still returns an integer — format it as `f"0x{code:04X}"` if you print it directly.
+- **Wuji Hand 2**: On device firmware v2.4.0 and later, fingertip per-point force arrives normalized to the sensor's full scale — normal axis 0 to 1, tangential axes -1 to 1, clamped beyond that. Firmware before v2.4.0 keeps reporting each point in newtons. The aggregate force and the temperature reading are in newtons and Celsius on both. Read `scale` and `unit` from `info.format` rather than assuming either convention, and re-fetch the info after a firmware upgrade so your decoder picks up the new scale.
+- `device.get()` / `manager.get()` now raise `WujiException` for a nonexistent parameter path. Previously they silently returned `None`.
+- **Retargeting**: The live teleoperation examples (`examples/python/retargeting/1.teleop_real.py` and `examples/c/retargeting/1_teleop_real.c`) now list the SDK users at startup and let you pick which one to teleoperate under, instead of always switching to the default user. Press Enter to keep the user you are already on, pick the default user to run on the built-in hand URDF, or pick a named user to teleoperate on that user's calibrated hand model — a named user that has not been calibrated yet also runs on the built-in URDF. The previously selected user is still restored on exit.
+
+### Removed
+
+- **Wuji Glove — BREAKING**: Removed the EMF pose rate divider—Python `glove.emf_poses_rate_divider()`, C `wuji_glove_get_emf_poses_rate_divider` / `wuji_glove_set_emf_poses_rate_divider`, and the matching examples. Upgrade the device firmware to v0.11.4 or later, then use `set_rate` on an `emf_poses` subscription. The setting resets when the last subscription closes or the device reconnects. Lowering `emf_poses` also lowers the EMF input rate used for hand tracking.
+
+### Fixed
+
+- **C SDK**: Calling an operation that a resource does not permit, such as reading a write-only resource or subscribing to a publish-only topic, now returns `WUJI_STATUS_ERR_UNSUPPORTED` instead of `WUJI_STATUS_ERR_INTERNAL`.
+- **Python and C SDKs**: After a device disconnects or is taken over by another host, Python `recv()` and `recv_async()` now raise `WujiException` immediately, and C subscription callbacks terminate without delivering buffered frames. Previously, Python could return buffered frames or `None`, and C callbacks could deliver buffered frames before terminating.
+- **Wuji Hand**: Direct hand methods (`read_joint_state()`, `enable()`/`disable()`, `clear_all_faults()`, effort-limit and diagnostics accessors, opening a realtime controller) now fail with a disconnect error after `disconnect()` instead of continuing to operate the device. Python raises `WujiException`. C returns `WUJI_STATUS_ERR_DISCONNECTED`.
+- **Wuji Hand**: Disconnecting now releases the USB device even when a joint-state subscription is still open. The same process can reconnect immediately without first closing the subscription or deleting the hand object.
+
 ## [2026.8.3]
 
 ### Added
@@ -25,6 +50,10 @@ and this project uses calendar versioning (YYYY.M.D).
 - **Wuji Hand 2 — BREAKING (C)**: The joint diagnostics structs gained new fields, so their C ABI changed. Applications that use `WujiJointDiagnosticsEntry` or `WujiJointDiagnosticsFrame` must be recompiled against the new header before linking the new library — linking new against old will read and write past the end of the old structs. Existing fields keep their meaning and order, and no source changes are needed; the added fields carry the per-joint bus communication quality and the frame-level communication summary described above.
 - **Wuji Hand**: `RealtimeController` can now be shared across Python threads — for example a writer thread streaming targets while a reader thread polls actual positions — without any locking. Previously, touching the controller from a second thread raised an error.
 - **C SDK**: The Linux x86_64 and aarch64 (gnu) tarballs now ship one library file, `libwuji_sdk_c.so`. Wuji Hand support no longer needs the `libwujihandcpp.so` that earlier tarballs bundled beside it, and `libstdc++.so.6` and `libusb-1.0.so.0` are no longer runtime dependencies. The C API and link line are unchanged, so existing applications keep working without a rebuild. If you deployed `libwujihandcpp.so` from an earlier tarball, you can delete it — the SDK doesn't load it anymore.
+
+### Removed
+
+- **Wuji Hand — BREAKING (Python)**: Removed the one-shot `joint_target_position()` resource (`hand.joint_target_position().set(...)`). Send targets through the joint-command publisher instead: `hand.joint_command().publish().send([JointCommand(position, 0.0, 0.0), ...])` with exactly 20 entries — behavior is unchanged.
 
 ### Fixed
 
@@ -267,7 +296,8 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...HEAD
+[2026.8.17]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...v2026.8.17
 [2026.8.3]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...v2026.8.3
 [2026.7.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...v2026.7.21
 [2026.7.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.2...v2026.7.14

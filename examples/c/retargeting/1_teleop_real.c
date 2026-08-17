@@ -15,11 +15,14 @@
  * or WUJI_HAND_MODEL_WUJI_HAND) and the handedness defined by SIDE below.
  * For a left-hand rig (glove + hand) change SIDE to WUJI_HANDEDNESS_LEFT.
  *
- * This example runs the glove on the SDK built-in default hand URDF: it
- * switches to the default SDK user before connecting - the default user runs
- * the glove on the built-in default hand URDF - and restores the previously
- * selected user on exit. Use a named SDK user to run with a calibrated hand
- * model.
+ * Before connecting, the example lists the SDK users and lets you pick which
+ * one to run under (see select_sdk_user); pressing Enter keeps the current
+ * user, and the previously selected user is restored on exit. The default user
+ * runs the glove on the SDK built-in default hand URDF; a named user runs it
+ * with that user's calibrated hand model, or on the built-in URDF as well when
+ * that user has no calibration yet. To teleoperate with a calibrated hand
+ * model, create a user and calibrate the glove under it first (see
+ * ../wuji_glove/3_user_management.c and ../wuji_glove/4_user_calibration.c).
  *
  * Build: point CMake at your extracted SDK tarball (see ../README.md):
  *          cmake -S . -B build \
@@ -35,6 +38,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
@@ -451,12 +455,141 @@ cleanup_hand_only:
 }
 
 /* ============================================================================
+ * SDK user selection
+ * ========================================================================== */
+
+#define USER_ID_CAP    256
+#define USER_NAME_CAP  128
+
+/* Interactively pick the SDK user to run under and switch to it, writing the
+ * previously selected user's id into out_prev_user_id so main() can restore it
+ * on exit.
+ *
+ * Switching happens before any device is connected, so the glove reads the
+ * selected user's hand model. Pressing Enter - or a closed stdin, as in a piped
+ * run - keeps the current user; Ctrl+C at the prompt returns
+ * WUJI_STATUS_ERR_CANCELLED without switching. */
+static WujiStatus select_sdk_user(char *out_prev_user_id, size_t cap)
+{
+    WujiUserInfo previous;
+    memset(&previous, 0, sizeof(previous));
+    WujiStatus st = wuji_current_user(&previous);
+    if (st != WUJI_STATUS_OK) {
+        fprintf(stderr, "wuji_current_user failed: %s\n", wuji_last_error());
+        return st;
+    }
+    char previous_name[USER_NAME_CAP] = {0};
+    snprintf(out_prev_user_id, cap, "%s", previous.user_id ? previous.user_id : "");
+    snprintf(previous_name, sizeof(previous_name), "%s",
+             previous.display_name ? previous.display_name : "");
+    wuji_user_info_free(&previous);
+
+    WujiUserInfo *users = NULL;
+    size_t len = 0;
+    st = wuji_list_users(&users, &len);
+    if (st != WUJI_STATUS_OK) {
+        fprintf(stderr, "wuji_list_users failed: %s\n", wuji_last_error());
+        return st;
+    }
+
+    printf("SDK users:\n");
+    for (size_t i = 0; i < len; i++) {
+        const char *tags[2];
+        size_t tag_count = 0;
+        if (users[i].is_default) tags[tag_count++] = "built-in URDF";
+        if (users[i].user_id && strcmp(users[i].user_id, out_prev_user_id) == 0)
+            tags[tag_count++] = "current";
+
+        const char *name = users[i].display_name ? users[i].display_name : "";
+        if (tag_count == 2)
+            printf("  [%zu] %s (%s, %s)\n", i, name, tags[0], tags[1]);
+        else if (tag_count == 1)
+            printf("  [%zu] %s (%s)\n", i, name, tags[0]);
+        else
+            printf("  [%zu] %s\n", i, name);
+    }
+
+    long index = -1; /* -1 keeps the current user */
+    for (;;) {
+        printf("Select user [0-%zu], Enter keeps current: ", len - 1);
+        fflush(stdout);
+
+        char line[128];
+        if (!fgets(line, sizeof(line), stdin)) {
+            if (g_stop) { /* Ctrl+C interrupted the read */
+                printf("\n");
+                wuji_user_info_array_free(users, len);
+                return WUJI_STATUS_ERR_CANCELLED;
+            }
+            printf("\nNo terminal input available - keeping the current SDK user.\n");
+            break;
+        }
+
+        char *s = line;
+        while (*s == ' ' || *s == '\t') s++;
+        char *end = s + strlen(s);
+        while (end > s && (end[-1] == '\n' || end[-1] == '\r' ||
+                           end[-1] == ' '  || end[-1] == '\t'))
+            *--end = '\0';
+        if (*s == '\0') break; /* Enter keeps the current user */
+
+        char *stop = NULL;
+        long value = strtol(s, &stop, 10);
+        /* strtol also parses negatives, which would index from the end. */
+        if (*stop != '\0' || value < 0 || (size_t)value >= len) {
+            printf("Invalid selection: '%s'\n", s);
+            continue;
+        }
+        index = value;
+        break;
+    }
+
+    char selected_name[USER_NAME_CAP] = {0};
+    if (index < 0) {
+        snprintf(selected_name, sizeof(selected_name), "%s", previous_name);
+        wuji_user_info_array_free(users, len);
+    } else {
+        /* users[] is freed before switching, so copy the id out first. */
+        char selected_user_id[USER_ID_CAP] = {0};
+        snprintf(selected_user_id, sizeof(selected_user_id), "%s",
+                 users[index].user_id ? users[index].user_id : "");
+        wuji_user_info_array_free(users, len);
+
+        WujiUserInfo selected;
+        memset(&selected, 0, sizeof(selected));
+        st = wuji_switch_user(selected_user_id, &selected);
+        if (st != WUJI_STATUS_OK) {
+            fprintf(stderr, "wuji_switch_user failed: %s\n", wuji_last_error());
+            return st;
+        }
+        snprintf(selected_name, sizeof(selected_name), "%s",
+                 selected.display_name ? selected.display_name : selected_user_id);
+        wuji_user_info_free(&selected);
+    }
+
+    printf("Running as SDK user: %s\n", selected_name);
+    return WUJI_STATUS_OK;
+}
+
+/* ============================================================================
  * Entry point: user management + teleop
  * ========================================================================== */
 
 int main(void)
 {
-    signal(SIGINT, on_sigint);
+    /* sa_flags = 0 (no SA_RESTART) so SIGINT interrupts the blocking fgets() in
+     * the user prompt with EINTR instead of restarting it. signal() gives no
+     * such guarantee: glibc takes its semantics from the feature-test macros,
+     * and musl and bionic always set SA_RESTART. */
+    struct sigaction sigint_action;
+    memset(&sigint_action, 0, sizeof(sigint_action));
+    sigint_action.sa_handler = on_sigint;
+    sigemptyset(&sigint_action.sa_mask);
+    sigint_action.sa_flags = 0;
+    if (sigaction(SIGINT, &sigint_action, NULL) != 0) {
+        fprintf(stderr, "sigaction(SIGINT) failed\n");
+        return 1;
+    }
 
     WujiInitOptions opts = { .log_level = 3 };
     if (wuji_init(&opts) != WUJI_STATUS_OK) {
@@ -464,50 +597,38 @@ int main(void)
         return 1;
     }
 
-    /* Run the glove on the SDK built-in default hand URDF: the default SDK
-     * user uses the built-in URDF, so switch to it before connecting and
-     * restore the previous user on exit. Use a named SDK user to run with a
-     * calibrated hand model: create one, switch to it, then calibrate the
-     * glove under it (calibrating under the default user has no effect). */
-    WujiUserInfo previous_user;
-    memset(&previous_user, 0, sizeof(previous_user));
-    WujiStatus user_st = wuji_current_user(&previous_user);
-    if (user_st != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_current_user failed: %s\n", wuji_last_error());
+    /* Pick the SDK user to run under. This has to happen before connecting: the
+     * glove reads the selected user's hand model at connect time. Calibrate the
+     * glove under a named user to teleoperate on that user's hand model
+     * (calibrating under the default user has no effect).
+     *
+     * Integrating this example and don't need user selection? Drop this call and
+     * the restore block below - the SDK then keeps running as whatever user is
+     * currently selected. */
+    char previous_user_id[USER_ID_CAP] = {0};
+    WujiStatus select_st = select_sdk_user(previous_user_id, sizeof(previous_user_id));
+    if (select_st != WUJI_STATUS_OK) {
         wuji_shutdown();
-        return 1;
+        return select_st == WUJI_STATUS_ERR_CANCELLED ? 130 : 1;
     }
-    /* Duplicate the user_id before switching, as switch_to_default_user
-     * overwrites the out_user with the new (default) user info. */
-    char previous_user_id[256] = {0};
-    if (previous_user.user_id)
-        snprintf(previous_user_id, sizeof(previous_user_id), "%s", previous_user.user_id);
-    wuji_user_info_free(&previous_user);
-
-    WujiUserInfo default_user;
-    memset(&default_user, 0, sizeof(default_user));
-    if (wuji_switch_to_default_user(&default_user) != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_switch_to_default_user failed: %s\n", wuji_last_error());
-        wuji_shutdown();
-        return 1;
-    }
-    printf("Switched to default SDK user (built-in URDF).\n");
-    wuji_user_info_free(&default_user);
 
     int exit_code = run_teleop();
 
-    /* Restore the previously selected SDK user on exit. */
-    if (previous_user_id[0] != '\0') {
-        WujiUserInfo restored;
-        memset(&restored, 0, sizeof(restored));
-        if (wuji_switch_user(previous_user_id, &restored) != WUJI_STATUS_OK) {
-            fprintf(stderr, "Failed to restore previous SDK user: %s\n", wuji_last_error());
-            exit_code = 1;
-        } else {
-            printf("Restored SDK user: %s\n",
-                   restored.display_name ? restored.display_name : previous_user_id);
-            wuji_user_info_free(&restored);
-        }
+    /* Restore the previously selected SDK user on exit. The default user's id is
+     * the empty string, so that case goes through wuji_switch_to_default_user
+     * rather than wuji_switch_user(""). */
+    WujiUserInfo restored;
+    memset(&restored, 0, sizeof(restored));
+    WujiStatus restore_st = previous_user_id[0] != '\0'
+                                ? wuji_switch_user(previous_user_id, &restored)
+                                : wuji_switch_to_default_user(&restored);
+    if (restore_st != WUJI_STATUS_OK) {
+        fprintf(stderr, "Failed to restore previous SDK user: %s\n", wuji_last_error());
+        exit_code = 1;
+    } else {
+        printf("Restored SDK user: %s\n",
+               restored.display_name ? restored.display_name : previous_user_id);
+        wuji_user_info_free(&restored);
     }
 
     wuji_shutdown();
