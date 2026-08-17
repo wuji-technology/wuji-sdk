@@ -28,7 +28,7 @@ endif()
 #   resolves $ORIGIN to the executable's own directory.
 get_filename_component(_wuji_sdk_lib_dir "${WUJI_SDK_LIB}" DIRECTORY)
 
-foreach(demo 0_subscribe_callback 1_emf_poses_rate_divider 2_set_hand_model_path 3_user_management 4_user_calibration 5_tactile_calibration 6_tactile_contact_view 7_tactile_residual_view)
+foreach(demo 0_subscribe_callback 1_set_stream_rate 2_set_hand_model_path 3_user_management 4_user_calibration 5_tactile_calibration 6_tactile_contact_view 7_tactile_residual_view)
     add_executable(${demo} ${demo}.c)
     target_include_directories(${demo} PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
     target_link_libraries(${demo} PRIVATE "${WUJI_SDK_LIB}")

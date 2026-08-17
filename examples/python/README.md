@@ -44,12 +44,12 @@ More examples: [examples/python/](https://github.com/wuji-technology/wuji-sdk/tr
 - `wuji_glove/3.offline_pipeline.py`: run hand tracking from offline frames.
 - `wuji_glove/4.user.py`: inspect, create, and switch local SDK users.
 - `wuji_glove/5.calibration.py`: run IK calibration with terminal guidance or API-style callbacks.
-- `wuji_glove/6.emf_poses_rate_divider.py`: lower the EMF pose output rate and compare affected stream rates.
+- `wuji_glove/6.set_stream_rate.py`: lower the glove's raw pose output rate at runtime with `subscription.set_rate()` on `emf_poses`; derived streams follow automatically.
 - `wuji_glove/7.tactile_calibration.py`: run the recommended guided tactile-calibration flow.
 - `wuji_glove/8.tactile_contact_view.py`: independently observe the live `tactile_binary` contact grid after calibration; it is not a calibration workflow.
 - `wuji_glove/9.tactile_residual_view.py`: observe the continuous signed `tactile_residual` grid after calibration and apply an adjustable contact threshold.
 - `retargeting/0.retarget_session.py`: map hand keypoints (21×3) to a joint command with `RetargetSession` — no hardware needed.
-- `retargeting/1.teleop_real.py`: live teleoperation — drive a Wuji Hand / Wuji Hand 2 from a Wuji Glove (an example built on `RetargetSession`; swap the glove read for any `(21,3)` keypoint source).
+- `retargeting/1.teleop_real.py`: live teleoperation — drive a Wuji Hand / Wuji Hand 2 from a Wuji Glove (an example built on `RetargetSession`; swap the glove read for any `(21,3)` keypoint source). It lists the SDK users and asks which one to teleoperate under: press Enter to keep the current user, pick the default user for the built-in hand URDF, or pick a named user to use that user's calibrated hand model — an uncalibrated named user falls back to the built-in URDF.
 
 ## Retargeting
 
