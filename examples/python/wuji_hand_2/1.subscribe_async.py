@@ -45,16 +45,19 @@ async def main():
 
     hands: list[WujiHand2] = []
     tasks = []
-    for i, dev in enumerate(hand_devices):
-        hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
-        print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
-        hands.append(hand)
-        tasks.append(print_joint_state(hand))
+    try:
+        for i, dev in enumerate(hand_devices):
+            hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
+            print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
+            hands.append(hand)
+            tasks.append(print_joint_state(hand))
 
-    print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
+        print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
 
-    # Feedback subscription only — no motor actuation, so no enable / disable needed.
-    await asyncio.gather(*tasks)
+        # Feedback subscription only — no motor actuation, so no enable / disable needed.
+        await asyncio.gather(*tasks)
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

@@ -1,13 +1,11 @@
 #define _POSIX_C_SOURCE 199309L
 
 /*
- * Wuji SDK C - Wuji Glove IK calibration for the current SDK user.
+ * Wuji SDK C - Wuji Glove hand model calibration for the current SDK user.
  *
  * This example uses the SDK's remembered current local user, connects to a
- * Wuji Glove, and runs IK calibration with structured feedback.
+ * Wuji Glove, and runs hand model calibration with structured feedback.
  *
- * For interactive calibration from a shell, use `wuji calib ik`. This example
- * is the reference for applications that integrate the SDK calibration API.
  * Run 3_user_management first to create or switch the current SDK user.
  *
  * The default asynchronous mode requests cooperative cancellation on Ctrl+C.
@@ -721,7 +719,7 @@ static void render_terminal(
     pose_guide(pose, title, sizeof(title), &guide);
 
     printf("\033[2J\033[H");
-    printf("Wuji Glove IK Calibration\n");
+    printf("Wuji Glove Hand Model Calibration\n");
     print_separator(width);
 
     if (feedback->state == WUJI_GLOVE_CALIBRATION_STATE_DONE) {

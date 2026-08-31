@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """
-Wuji Glove IK calibration example.
+Wuji Glove hand model calibration example.
 
 This example uses the SDK's remembered current local user. To create, inspect,
 or switch users, run 4.user.py first.
-
-For interactive calibration from a shell, use `wuji calib ik`. This example is
-the reference for applications that integrate the SDK calibration API.
 
 Calibration produces one hand model per side for the current SDK user
 (left_hand.urdf / right_hand.urdf). Any glove of the same side connected under
@@ -329,7 +326,7 @@ class TerminalProgress:
         title, guide = pose_text(pose)
 
         print("\033[2J\033[H", end="")
-        print("Wuji Glove IK Calibration")
+        print("Wuji Glove Hand Model Calibration")
         print(sep)
 
         if state == "done":
@@ -401,9 +398,9 @@ def run_terminal_blocking(manager: SdkManager, args: argparse.Namespace) -> None
 def main() -> None:
     args = parse_args()
     set_log_level(args.log_level)
+    manager = SdkManager.instance()
 
     try:
-        manager = SdkManager.instance()
         print_current_user(manager)
         if args.dry_run:
             print("\nDry run complete: no device connection or calibration was performed.")
@@ -423,6 +420,8 @@ def main() -> None:
     except (WujiException, RuntimeError) as e:
         print(f"Error: {e}")
         raise SystemExit(1) from e
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

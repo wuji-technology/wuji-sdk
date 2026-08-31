@@ -198,21 +198,24 @@ def main() -> int:
     args = parse_args()
     set_log_level(args.log_level)
     manager = SdkManager.instance()
-    glove = connect_glove(manager, args)
-    sn = args.sn or glove.serial_number
-    print_intro(sn, args)
-
     try:
-        result = glove.calibrate_tactile_blocking(**calibration_options(args))
-    except WujiException as exc:
-        print(f"\nTactile calibration failed: {exc}", file=sys.stderr)
-        return 1
-    except KeyboardInterrupt:
-        print("\nTactile calibration interrupted.", file=sys.stderr)
-        return 130
+        glove = connect_glove(manager, args)
+        sn = args.sn or glove.serial_number
+        print_intro(sn, args)
 
-    print_result(result)
-    return 0
+        try:
+            result = glove.calibrate_tactile_blocking(**calibration_options(args))
+        except WujiException as exc:
+            print(f"\nTactile calibration failed: {exc}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            print("\nTactile calibration interrupted.", file=sys.stderr)
+            return 130
+
+        print_result(result)
+        return 0
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

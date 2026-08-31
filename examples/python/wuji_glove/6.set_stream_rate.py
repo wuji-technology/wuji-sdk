@@ -31,21 +31,26 @@ async def main():
     if not gloves:
         print("No Wuji Glove found")
         return
-    glove = manager.connect(sn=gloves[0].sn, device_name="glove")
-    print(f"Connected: {glove.serial_number}")
+    sub = None
+    try:
+        glove = manager.connect(sn=gloves[0].sn, device_name="glove")
+        print(f"Connected: {glove.serial_number}")
 
-    # Keep the handle open for as long as you want its rate to stay in effect.
-    sub = glove.emf_poses().subscribe()
-    # other = glove.tactile().subscribe(); print(other.set_rate(REQUESTED_HZ))
+        # Keep the handle open for as long as you want its rate to stay in effect.
+        sub = glove.emf_poses().subscribe()
+        # other = glove.tactile().subscribe(); print(other.set_rate(REQUESTED_HZ))
 
-    actual = sub.set_rate(REQUESTED_HZ)
-    print(f"emf_poses: requested {REQUESTED_HZ} Hz, device applied {actual} Hz")
-    for _ in range(5):
-        frame = await sub.recv_async()
-        print(f"emf_poses frame at {actual} Hz: {len(frame.poses)} poses")
+        actual = sub.set_rate(REQUESTED_HZ)
+        print(f"emf_poses: requested {REQUESTED_HZ} Hz, device applied {actual} Hz")
+        for _ in range(5):
+            frame = await sub.recv_async()
+            print(f"emf_poses frame at {actual} Hz: {len(frame.poses)} poses")
 
-    print(f"restored to the device default: {sub.set_rate(0)} Hz")
-    sub.close()
+        print(f"restored to the device default: {sub.set_rate(0)} Hz")
+    finally:
+        if sub is not None:
+            sub.close()
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

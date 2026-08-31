@@ -12,11 +12,19 @@
  *     the hand model. `positions` and `point_rpy` are in the sensor module's own
  *     base frame; `base_xyz` and `base_rpy` give that frame's pose relative to
  *     the finger's `tip_sensor_frame` link, so point i lands at
- *     R(base_rpy) * positions[i] + base_xyz. The hand reports the pose for
- *     whichever hand it is, so this works unchanged on a left or a right hand.
+ *     R(base_rpy) * positions[i] + base_xyz, and `aggregate_xyz` marks where the
+ *     aggregate force acts and `aggregate_rpy` orients its axes, both in that same
+ *     sensor frame, so the resultant becomes a wrench rather than a bare force.
+ *     Firmware without `aggregate_xyz` reports no point and no moment; without
+ *     `aggregate_rpy` both still appear, with the force axes taken from the mounting
+ *     pose. The hand reports the pose for whichever hand it is, so this works
+ *     unchanged on a left or a right hand.
  *   - subscribes to the five per-finger data streams (~100 Hz,
- *     WujiFingertipSensorData) and reports the hardest-pressed point together
- *     with where that point sits on the fingertip.
+ *     WujiFingertipSensorData) and refreshes an in-place display at 100 Hz: one
+ *     status line per finger (aggregate force, temperature, contact count, and
+ *     the hardest-pressed point with where it sits on the fingertip) above a
+ *     table of every point's fx / fy / fz — 40 points for thumb, 34 for the
+ *     other fingers.
  *
  * The JSON reader below is deliberately tiny — it only handles the flat numeric
  * keys and arrays this contract uses. Use a real JSON parser in production code.
@@ -30,8 +38,11 @@
  *
  * THREADING: each callback fires on a dedicated SDK worker thread, NOT main.
  * The `frame` pointer is valid only for the duration of the callback (its heap
- * `data` buffer is freed right after the callback returns) — never stash it.
+ * `data` buffer is freed right after the callback returns) — never stash it. The
+ * table needs all five fingers at once, so each callback copies its payload into
+ * C-owned storage under a lock and the main thread renders from those copies.
  */
+#include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -39,12 +50,15 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
-#include <time.h>
 #include <math.h>
 
 #include "wuji_sdk.h"
 
+#define FINGER_COUNT 5
 #define MAX_POINTS 40  /* thumb has the most; standard fingers have 34 */
+#define MAX_FRAME_BYTES 2048  /* per-finger payload copy; layouts above this are refused */
+#define REFRESH_US 10000      /* 100 Hz redraw, matching the stream rate */
+#define CELL_W 18             /* nominal cell width; cells only ever grow, never clip */
 
 /* "In contact" threshold per unit the format declares — never assume one of them.
  * Firmware v2.4.0 and later reports per-point force normalized to full scale;
@@ -145,15 +159,35 @@ static int json_numbers(const char *p, double *out, int max) {
     return n;
 }
 
-/* Read a single scalar number for `key`. Returns 0 on success. */
-static int json_scalar(const char *json, const char *key, double *out) {
-    const char *p = json_value(json, key);
+/* Read the finite number at `p`. Returns 0 on success. Plain strtod would accept
+ * "nan" and stop at trailing junk ("1abc" reads as 1), so require a JSON delimiter
+ * after the number and test the range positively, which drops NaN. */
+static int number_at(const char *p, double *out) {
     if (!p) return -1;
     char *end;
     double v = strtod(p, &end);
     if (end == p) return -1;
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
+    if (*end && !strchr(",}]", *end)) return -1;
+    if (!(v > -HUGE_VAL && v < HUGE_VAL)) return -1;
     *out = v;
     return 0;
+}
+
+/* Read a whole number in [0, max] at `p` as an int. Returns 0 on success. Every
+ * value that indexes a device-supplied buffer goes through here. */
+static int whole_at(const char *p, double max, int *out) {
+    double v;
+    if (number_at(p, &v) != 0) return -1;
+    if (!(v >= 0.0 && v <= max)) return -1;
+    if (v != (double)(long)v) return -1;
+    *out = (int)v;
+    return 0;
+}
+
+/* Read a whole number for a key on the format's outermost object. */
+static int json_whole(const char *json, const char *key, double max, int *out) {
+    return whole_at(json_value(json, key), max, out);
 }
 
 /* Copy the string value at `p` into `out` (NUL-terminated). Returns 0 on success. */
@@ -167,6 +201,32 @@ static int json_string_at(const char *p, char *out, size_t cap) {
     memcpy(out, p, (size_t)(end - p));
     out[end - p] = '\0';
     return 0;
+}
+
+/* Read the offset and scale of the field called `name` from an array of field
+ * objects. Every lookup is bounded to the matching object, so a field that does
+ * not declare one of them cannot pick up the next entry's value. The i16 read at
+ * that offset must land inside `stride`. Returns 0 on success, -1 if the field is
+ * absent or malformed. Every field this contract declares is required. */
+static int field_lookup(const char *arr, const char *arr_end, const char *name,
+                        int stride, int *off, double *scale) {
+    if (!arr || *arr != '[' || !arr_end) return -1;
+    for (const char *cur = arr + 1; cur < arr_end; ) {
+        while (cur < arr_end && *cur != '{') cur++;
+        const char *obj_end = cur < arr_end ? json_value_end(cur) : NULL;
+        if (!obj_end || obj_end > arr_end) return -1;
+        char have[32] = {0};
+        if (json_string_at(json_find(cur, "name", -1, obj_end), have, sizeof have) == 0 &&
+            strcmp(have, name) == 0) {
+            if (whole_at(json_find(cur, "offset", -1, obj_end),
+                         (double)stride - (double)sizeof(int16_t), off) != 0) return -1;
+            /* A non-finite scale would turn every decoded value into a nan. */
+            if (number_at(json_find(cur, "scale", -1, obj_end), scale) != 0) return -1;
+            return 0;
+        }
+        cur = obj_end;
+    }
+    return -1;
 }
 
 /* --------------------------------------------------------------- geometry */
@@ -194,50 +254,78 @@ static void mat_mul(const double a[3][3], const double b[3][3], double out[3][3]
 
 /* ------------------------------------------------------------ finger state */
 
-/* Everything a finger's callback needs, all derived from that finger's format.
- * Touched only by that finger's single worker thread, so no atomics needed. */
+/* Why a frame is not being shown. Recorded by the callback and rendered on the
+ * finger's status line: printing straight from the callback would scribble over
+ * the table the main thread is redrawing. */
+typedef enum {
+    FINGER_WAITING = 0,
+    FINGER_OK,
+    FINGER_LAGGED,
+    FINGER_ENDED,
+    FINGER_ERRORED,
+    FINGER_INFO_CHANGED,
+    FINGER_BAD_LENGTH,
+} finger_state_t;
+
+/* Everything a finger's callback needs, all derived from that finger's format,
+ * plus the latest payload for the main thread to render. */
 typedef struct {
     const char *name;
-    uint64_t    last_print_ms;
     int         point_count;
     int         stride;             /* bytes per point block */
     int         expect_len;         /* exact data length the contract demands */
     int         off[3];             /* byte offset of fx / fy / fz inside a point */
     double      scale[3];           /* raw integer * scale = physical value */
+    int         agg_off[4];         /* aggregate fx / fy / fz / temperature offsets */
+    double      agg_scale[4];
     double      contact;            /* |F| above this counts as contact, in `unit` */
     uint32_t    digest;             /* info revision this decoder was built from */
     int         placed;             /* mount pose present in this firmware */
     double      pos[MAX_POINTS][3];    /* point position in tip_sensor_frame, metres */
     double      axes[MAX_POINTS][3][3]; /* rotates that point's force into the same frame */
+    int         has_force_point;    /* format declares where the aggregate force acts */
+    double      force_point[3];     /* that point in tip_sensor_frame, metres */
+    double      force_R[3][3];      /* rotates the aggregate force into tip_sensor_frame */
+
+    /* Written by this finger's worker thread, read by the renderer. */
+    pthread_mutex_t lock;
+    int             lock_ready;
+    finger_state_t  state;
+    uint8_t         data[MAX_FRAME_BYTES];
+    int             data_len;
+    uint32_t        seq;
+    uint32_t        seen_digest;    /* the digest that did not match, for the message */
 } finger_ctx_t;
 
-static uint64_t now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
-}
+/* Indices into agg_off / agg_scale. */
+enum { AGG_FX = 0, AGG_FY, AGG_FZ, AGG_TEMP };
 
 /* Parse the finger's format JSON into ctx. Returns 0 on success. */
 static int parse_format(const char *json, finger_ctx_t *ctx) {
-    double pc, stride, agg_stride;
-    if (json_scalar(json, "point_count", &pc) ||
-        json_scalar(json, "point_stride", &stride) ||
-        json_scalar(json, "aggregate_stride", &agg_stride)) {
-        fprintf(stderr, "[%s] format missing layout keys\n", ctx->name);
-        return -1;
-    }
     /* Everything below indexes into a device-supplied buffer, so range-check the
      * layout before trusting it: a corrupt or hostile format must not be able to
-     * steer a read past the point block or the frame. */
-    if (pc <= 0 || pc > MAX_POINTS || stride <= 0 || agg_stride < 0 ||
-        stride > 4096 || agg_stride > 4096) {
-        fprintf(stderr, "[%s] implausible layout: %g points, stride %g, aggregate %g\n",
-                ctx->name, pc, stride, agg_stride);
+     * steer a read past the point block or the frame. whole_at() also refuses
+     * anything that is not a plain whole number, so no NaN and no fraction can
+     * reach the ints the rest of this function indexes with. */
+    int pc = 0, stride = 0, agg_stride = 0;
+    if (json_whole(json, "point_count", MAX_POINTS, &pc) ||
+        json_whole(json, "point_stride", 4096, &stride) ||
+        json_whole(json, "aggregate_stride", 4096, &agg_stride) ||
+        pc == 0 || stride == 0) {
+        fprintf(stderr, "[%s] missing or implausible layout keys\n", ctx->name);
         return -1;
     }
-    ctx->point_count = (int)pc;
-    ctx->stride      = (int)stride;
-    ctx->expect_len  = ctx->point_count * ctx->stride + (int)agg_stride;
+    ctx->point_count = pc;
+    ctx->stride      = stride;
+    ctx->expect_len  = pc * stride + agg_stride;
+    /* Each frame is copied into a fixed per-finger buffer so the renderer can read
+     * all five at once. A layout the buffer cannot hold would make every frame
+     * unusable, so refuse it here with the size rather than sitting on "waiting". */
+    if (ctx->expect_len > MAX_FRAME_BYTES) {
+        fprintf(stderr, "[%s] layout needs %dB, buffer holds %d; raise MAX_FRAME_BYTES\n",
+                ctx->name, ctx->expect_len, MAX_FRAME_BYTES);
+        return -1;
+    }
 
     /* point_fields is an array of objects, one per axis in fx, fy, fz order.
      * Every lookup below is bounded to that array, and each axis to its own
@@ -263,17 +351,38 @@ static int parse_format(const char *json, finger_ctx_t *ctx) {
             fprintf(stderr, "[%s] point_fields[%d] has no offset/scale\n", ctx->name, i);
             return -1;
         }
-        double off = strtod(o, NULL);
         /* Each axis is an i16 read at blk + off, so the whole read must land
          * inside the point block. */
-        if (off < 0 || off + (double)sizeof(int16_t) > stride) {
-            fprintf(stderr, "[%s] point_fields[%d] offset %g does not fit stride %g\n",
-                    ctx->name, i, off, stride);
+        if (whole_at(o, (double)stride - (double)sizeof(int16_t), &ctx->off[i]) != 0) {
+            fprintf(stderr, "[%s] point_fields[%d] offset does not fit stride %d\n",
+                    ctx->name, i, stride);
             return -1;
         }
-        ctx->off[i]   = (int)off;
-        ctx->scale[i] = strtod(s, NULL);
+        /* A non-finite scale would turn every decoded value into a nan. */
+        if (number_at(s, &ctx->scale[i]) != 0) {
+            fprintf(stderr, "[%s] point_fields[%d] has an unusable scale\n", ctx->name, i);
+            return -1;
+        }
         cur = obj_end;
+    }
+
+    /* The aggregate block sits after the point array and carries the resultant
+     * force and the sensor temperature, both required by the contract. Same i16
+     * assumption as the point fields; offsets are bounded to the block. */
+    const char *af = json_value(json, "aggregate_fields");
+    const char *af_end = af ? json_value_end(af) : NULL;
+    const char *agg_names[3] = { "fx", "fy", "fz" };
+    for (int i = 0; i < 3; i++) {
+        if (field_lookup(af, af_end, agg_names[i], agg_stride,
+                         &ctx->agg_off[i], &ctx->agg_scale[i]) != 0) {
+            fprintf(stderr, "[%s] aggregate_fields has no usable %s\n", ctx->name, agg_names[i]);
+            return -1;
+        }
+    }
+    if (field_lookup(af, af_end, "temperature", agg_stride,
+                     &ctx->agg_off[AGG_TEMP], &ctx->agg_scale[AGG_TEMP]) != 0) {
+        fprintf(stderr, "[%s] aggregate_fields has no temperature\n", ctx->name);
+        return -1;
     }
 
     /* Contact threshold follows the unit the format declares. A unit on the
@@ -339,76 +448,242 @@ static int parse_format(const char *json, finger_ctx_t *ctx) {
         rpy_to_matrix(&rpy[k * 3], Rp);
         mat_mul(R, Rp, ctx->axes[k]);
     }
+    memcpy(ctx->force_R, R, sizeof R);
     ctx->placed = 1;
+
+    /* `aggregate_xyz` arrived a generation after the mount pose: where the resultant in
+     * `aggregate_fields` acts, in the same frame as `positions`. Absent means older
+     * firmware and the resultant has no declared point; present means force plus point
+     * is a wrench. Nothing is guessed in between. */
+    /* A missing key and a malformed one are different failures and must not collapse into
+     * one silent path: absent means older firmware, present-but-not-three-numbers is a
+     * broken format and is rejected, same split the mount block above uses. */
+    double agg_xyz[3], agg_rpy[3];
+    const char *agg_xyz_val = json_value(json, "aggregate_xyz");
+    if (agg_xyz_val) {
+        if (json_numbers(agg_xyz_val, agg_xyz, 3) != 3) {
+            fprintf(stderr, "[%s] aggregate_xyz is not 3 numbers\n", ctx->name);
+            return -1;
+        }
+        mat_vec(R, agg_xyz, ctx->force_point);
+        for (int a = 0; a < 3; a++) ctx->force_point[a] += base_xyz[a];
+        ctx->has_force_point = 1;
+    }
+    /* `aggregate_rpy` orients the resultant's own axes, same convention as point_rpy.
+     * Without it the axes are undeclared and the sensor frame is the only sane reading,
+     * which is what force_R already holds. Validated independently of aggregate_xyz. */
+    const char *agg_rpy_val = json_value(json, "aggregate_rpy");
+    if (agg_rpy_val) {
+        if (json_numbers(agg_rpy_val, agg_rpy, 3) != 3) {
+            fprintf(stderr, "[%s] aggregate_rpy is not 3 numbers\n", ctx->name);
+            return -1;
+        }
+        double Ra[3][3], Rf[3][3];
+        rpy_to_matrix(agg_rpy, Ra);
+        mat_mul(R, Ra, Rf);
+        memcpy(ctx->force_R, Rf, sizeof Rf);
+    }
     return 0;
+}
+
+/* Record why this finger has nothing to show. */
+static void set_state(finger_ctx_t *ctx, finger_state_t state) {
+    pthread_mutex_lock(&ctx->lock);
+    ctx->state = state;
+    pthread_mutex_unlock(&ctx->lock);
 }
 
 static void on_fingertip_data(WujiFrameKind kind, const WujiFingertipSensorData *f, void *ud) {
     finger_ctx_t *ctx = (finger_ctx_t *)ud;
 
-    if (kind == WUJI_FRAME_KIND_LAG)   { fprintf(stderr, "[%s] lagged\n", ctx->name); return; }
-    if (kind == WUJI_FRAME_KIND_END)   { fprintf(stderr, "[%s] stream ended\n", ctx->name); return; }
-    if (kind == WUJI_FRAME_KIND_ERROR) { fprintf(stderr, "[%s] error: %s\n", ctx->name, wuji_last_error()); return; }
-    if (kind != WUJI_FRAME_KIND_OK || !f) return;
-
-    /* Throttle printing to ~1 Hz (the stream is ~100 Hz). */
-    uint64_t now = now_ms();
-    if (now - ctx->last_print_ms < 1000) return;
-    ctx->last_print_ms = now;
+    if (kind == WUJI_FRAME_KIND_LAG)   { set_state(ctx, FINGER_LAGGED);  return; }
+    if (kind == WUJI_FRAME_KIND_END)   { set_state(ctx, FINGER_ENDED);   return; }
+    if (kind == WUJI_FRAME_KIND_ERROR) { set_state(ctx, FINGER_ERRORED); return; }
+    if (kind != WUJI_FRAME_KIND_OK || !f || !f->data) return;
 
     /* info_digest binds the frame to a specific info revision. Two revisions can
      * share a payload length while differing in scale, unit or mounting pose, so
      * check it before decoding — a length check alone would let this decoder keep
      * applying a stale format. A real application re-fetches info on mismatch;
-     * this example drops the frame and says so. */
+     * this example drops the frame and says so on the status line. */
     if (f->info_digest != ctx->digest) {
-        fprintf(stderr, "[%s] info_digest 0x%08x != 0x%08x from info; re-GET info\n",
-                ctx->name, f->info_digest, ctx->digest);
+        pthread_mutex_lock(&ctx->lock);
+        ctx->state = FINGER_INFO_CHANGED;
+        ctx->seen_digest = f->info_digest;
+        pthread_mutex_unlock(&ctx->lock);
         return;
     }
 
     /* The contract demands an exact length; a short frame is a fault, not a
      * partial read. */
     if ((int)f->data_len != ctx->expect_len) {
-        fprintf(stderr, "[%s] data_len %zu != %d\n", ctx->name, f->data_len, ctx->expect_len);
+        set_state(ctx, FINGER_BAD_LENGTH);
         return;
     }
 
-    /* Decode per the format and find the hardest-pressed point. */
-    int peak = -1;
-    double peak_mag = 0.0, peak_f[3] = {0};
-    for (int k = 0; k < ctx->point_count; k++) {
-        const uint8_t *blk = f->data + (size_t)k * ctx->stride;
-        double c[3];
-        for (int a = 0; a < 3; a++) {
-            int16_t raw;
-            memcpy(&raw, blk + ctx->off[a], sizeof raw);   /* i16 little-endian */
-            c[a] = raw * ctx->scale[a];
-        }
-        double mag = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
-        if (mag > peak_mag) {
-            peak_mag = mag;
-            peak = k;
-            memcpy(peak_f, c, sizeof peak_f);
-        }
+    /* Copy the payload out before returning: the frame and its heap buffer die
+     * with this call, and the renderer needs all five fingers together. */
+    pthread_mutex_lock(&ctx->lock);
+    memcpy(ctx->data, f->data, f->data_len);
+    ctx->data_len = (int)f->data_len;
+    ctx->seq      = f->header.seq;
+    ctx->state    = FINGER_OK;
+    pthread_mutex_unlock(&ctx->lock);
+}
+
+/* ----------------------------------------------------------------- display */
+
+/* One decoded frame, ready to render. */
+typedef struct {
+    finger_state_t state;
+    uint32_t       seq;
+    uint32_t       seen_digest;
+    int            point_count;
+    double         pts[MAX_POINTS][3];   /* per-point fx / fy / fz */
+    double         agg[3];               /* aggregate resultant force */
+    double         temp;
+    int            contacts;
+    int            peak;                 /* hardest-pressed point, -1 if none */
+    double         peak_mag;
+    double         peak_dir[3];          /* peak force in tip_sensor_frame */
+} snapshot_t;
+
+/* Read a scaled i16 at `base + off`. The offsets were bounded against their
+ * block at parse time, so the read cannot leave the payload. */
+static double read_i16(const uint8_t *data, int base, int off, double scale) {
+    int16_t raw;
+    memcpy(&raw, data + base + off, sizeof raw);   /* little-endian on the wire */
+    return raw * scale;
+}
+
+/* Take this finger's latest frame and decode it. */
+static void snapshot(finger_ctx_t *ctx, snapshot_t *s) {
+    uint8_t data[MAX_FRAME_BYTES];
+    int len = 0;
+
+    pthread_mutex_lock(&ctx->lock);
+    s->state       = ctx->state;
+    s->seq         = ctx->seq;
+    s->seen_digest = ctx->seen_digest;
+    if (ctx->state == FINGER_OK) {
+        len = ctx->data_len;
+        memcpy(data, ctx->data, (size_t)len);
+    }
+    pthread_mutex_unlock(&ctx->lock);
+
+    s->point_count = ctx->point_count;
+    s->peak        = -1;
+    s->peak_mag    = 0.0;
+    s->contacts    = 0;
+    if (s->state != FINGER_OK || len != ctx->expect_len) {
+        if (s->state == FINGER_OK) s->state = FINGER_WAITING;
+        return;
     }
 
-    if (peak < 0 || peak_mag <= ctx->contact) {
-        printf("[%-6s] seq=%u  info_digest=0x%08x  no contact\n",
-               ctx->name, f->header.seq, f->info_digest);
-    } else if (ctx->placed) {
-        double dir[3];
-        mat_vec(ctx->axes[peak], peak_f, dir);   /* force axes into tip_sensor_frame */
-        printf("[%-6s] seq=%u  info_digest=0x%08x  peak#%-2d |F|=%.3f  "
-               "at (%+6.2f,%+6.2f,%+6.2f)mm  dir=(%+5.2f,%+5.2f,%+5.2f)\n",
-               ctx->name, f->header.seq, f->info_digest, peak, peak_mag,
-               ctx->pos[peak][0] * 1000, ctx->pos[peak][1] * 1000, ctx->pos[peak][2] * 1000,
-               dir[0], dir[1], dir[2]);
-    } else {
-        printf("[%-6s] seq=%u  info_digest=0x%08x  peak#%-2d |F|=%.3f  (no mount pose)\n",
-               ctx->name, f->header.seq, f->info_digest, peak, peak_mag);
+    for (int k = 0; k < ctx->point_count; k++) {
+        int blk = k * ctx->stride;
+        for (int a = 0; a < 3; a++)
+            s->pts[k][a] = read_i16(data, blk, ctx->off[a], ctx->scale[a]);
+        double mag = sqrt(s->pts[k][0] * s->pts[k][0] + s->pts[k][1] * s->pts[k][1] +
+                          s->pts[k][2] * s->pts[k][2]);
+        if (mag > ctx->contact) s->contacts++;
+        if (mag > s->peak_mag) { s->peak_mag = mag; s->peak = k; }
     }
-    fflush(stdout);
+
+    int agg_base = ctx->point_count * ctx->stride;
+    for (int a = 0; a < 3; a++)
+        s->agg[a] = read_i16(data, agg_base, ctx->agg_off[a], ctx->agg_scale[a]);
+    s->temp = read_i16(data, agg_base, ctx->agg_off[AGG_TEMP], ctx->agg_scale[AGG_TEMP]);
+
+    /* Rotate the peak point's force into tip_sensor_frame, where its position is. */
+    if (s->peak >= 0 && ctx->placed)
+        mat_vec(ctx->axes[s->peak], s->pts[s->peak], s->peak_dir);
+}
+
+static const char *state_text(const snapshot_t *s) {
+    switch (s->state) {
+        case FINGER_LAGGED:       return "lagged, waiting for the next frame";
+        case FINGER_ENDED:        return "stream ended";
+        case FINGER_ERRORED:      return "stream error";
+        case FINGER_INFO_CHANGED: return "info changed; re-GET info";
+        case FINGER_BAD_LENGTH:   return "unexpected payload length";
+        default:                  return "waiting for data...";
+    }
+}
+
+/* Per-finger status line: aggregate force, temperature, contact count and the
+ * hardest-pressed point with where it sits on the fingertip. */
+static void status_line(finger_ctx_t *ctx, const snapshot_t *s) {
+    if (s->state != FINGER_OK) {
+        if (s->state == FINGER_INFO_CHANGED)
+            printf("\033[2K%-7s info changed (0x%08x != 0x%08x); re-GET info\n",
+                   ctx->name, s->seen_digest, ctx->digest);
+        else
+            printf("\033[2K%-7s %s\n", ctx->name, state_text(s));
+        return;
+    }
+    printf("\033[2K%-7s %2dpt  seq=%-6u", ctx->name, s->point_count, s->seq);
+    printf("  temp=%5.1fC", s->temp);
+    printf("  force=(%+6.2f,%+6.2f,%+6.2f)N  contacts=%2d",
+           s->agg[0], s->agg[1], s->agg[2], s->contacts);
+    /* Resultant plus its application point is a wrench: rotate the force into
+     * tip_sensor_frame and take p x f about that frame's origin, in mN*m. */
+    if (ctx->has_force_point) {
+        double f[3];
+        mat_vec(ctx->force_R, s->agg, f);
+        const double *pt = ctx->force_point;
+        printf("  moment=(%+6.1f,%+6.1f,%+6.1f)mNm",
+               (pt[1] * f[2] - pt[2] * f[1]) * 1000.0,
+               (pt[2] * f[0] - pt[0] * f[2]) * 1000.0,
+               (pt[0] * f[1] - pt[1] * f[0]) * 1000.0);
+    }
+    if (s->peak >= 0 && s->peak_mag > ctx->contact) {
+        printf("  peak#%-2d |F|=%.3f", s->peak, s->peak_mag);
+        if (ctx->placed)
+            printf(" at (%+6.2f,%+6.2f,%+6.2f)mm dir=(%+5.2f,%+5.2f,%+5.2f)",
+                   ctx->pos[s->peak][0] * 1000, ctx->pos[s->peak][1] * 1000,
+                   ctx->pos[s->peak][2] * 1000,
+                   s->peak_dir[0], s->peak_dir[1], s->peak_dir[2]);
+    } else {
+        printf("  no contact");
+    }
+    printf("\n");
+}
+
+/* Status lines for all five fingers, then every point's force components. */
+static void render(finger_ctx_t ctxs[FINGER_COUNT], int max_points) {
+    snapshot_t snaps[FINGER_COUNT];
+    for (int f = 0; f < FINGER_COUNT; f++) {
+        snapshot(&ctxs[f], &snaps[f]);
+        status_line(&ctxs[f], &snaps[f]);
+    }
+
+    printf("\033[2Kpt   | ");
+    for (int f = 0; f < FINGER_COUNT; f++)
+        printf("%-*s%s", CELL_W, ctxs[f].name, f == FINGER_COUNT - 1 ? "\n" : " | ");
+    printf("\033[2K-----+");
+    for (int f = 0; f < FINGER_COUNT; f++) {
+        for (int j = 0; j < CELL_W + 2; j++) putchar('-');
+        printf("%s", f == FINGER_COUNT - 1 ? "\n" : "+");
+    }
+
+    for (int i = 0; i < max_points; i++) {
+        printf("\033[2Kp%02d  | ", i);
+        for (int f = 0; f < FINGER_COUNT; f++) {
+            /* Roomier than CELL_W on purpose: printf pads a short cell out to the
+             * column but never trims a long one, so a force too wide for the
+             * column nudges the row instead of losing a digit. */
+            char cell[48] = "";   /* stays empty past this finger's point count */
+            if (i < snaps[f].point_count) {
+                if (snaps[f].state != FINGER_OK)
+                    snprintf(cell, sizeof cell, "waiting");
+                else
+                    snprintf(cell, sizeof cell, "%+.1f,%+.1f,%+.1f",
+                             snaps[f].pts[i][0], snaps[f].pts[i][1], snaps[f].pts[i][2]);
+            }
+            printf("%-*s%s", CELL_W, cell, f == FINGER_COUNT - 1 ? "\n" : " | ");
+        }
+    }
 }
 
 int main(void) {
@@ -456,20 +731,24 @@ int main(void) {
 
     /* Read each finger's self-describing info (high-level; chunked read hidden)
      * and derive its decoder plus where its points sit on the hand. */
-    const char *names[5] = { "thumb", "index", "middle", "ring", "pinky" };
-    finger_ctx_t ctxs[5];
+    const char *names[FINGER_COUNT] = { "thumb", "index", "middle", "ring", "pinky" };
+    finger_ctx_t ctxs[FINGER_COUNT];
+    int max_points = 0;
     memset(ctxs, 0, sizeof ctxs);
-    for (uint8_t i = 0; i < 5; i++) {
+    for (uint8_t i = 0; i < FINGER_COUNT; i++) {
         WujiFingertipSensorInfo info;
         if (wuji_hand_2_get_fingertip_info(dev, i, &info) != WUJI_STATUS_OK) {
             fprintf(stderr, "get_fingertip_info(%s): %s\n", names[i], wuji_last_error());
             goto cleanup;
         }
         ctxs[i].name = names[i];
+        pthread_mutex_init(&ctxs[i].lock, NULL);
+        ctxs[i].lock_ready = 1;
         /* Remember which info revision this decoder came from; every data frame
          * carries the same value and is rejected if it drifts. */
         ctxs[i].digest = info.digest;
         if (parse_format(info.format, &ctxs[i]) != 0) goto cleanup;
+        if (ctxs[i].point_count > max_points) max_points = ctxs[i].point_count;
         printf("  %-6s frame_id=%s  device_type=0x%04x  rate=%.0fHz  digest=0x%08x  %d points  %s\n",
                names[i], info.header.frame_id, info.device_type, info.rate_hz, info.digest,
                ctxs[i].point_count,
@@ -479,10 +758,14 @@ int main(void) {
             printf("         point 0 at (%+6.2f,%+6.2f,%+6.2f)mm in %s_tip_sensor_frame\n",
                    ctxs[i].pos[0][0] * 1000, ctxs[i].pos[0][1] * 1000,
                    ctxs[i].pos[0][2] * 1000, names[i]);
+        if (ctxs[i].has_force_point)
+            printf("         aggregate force acts at (%+6.2f,%+6.2f,%+6.2f)mm\n",
+                   ctxs[i].force_point[0] * 1000, ctxs[i].force_point[1] * 1000,
+                   ctxs[i].force_point[2] * 1000);
     }
 
     /* Subscribe to the five per-finger typed data streams. */
-    struct WujiSub *subs[5] = { 0 };
+    struct WujiSub *subs[FINGER_COUNT] = { 0 };
     st  = wuji_hand_2_subscribe_fingertip_thumb_data(dev, on_fingertip_data, &ctxs[0], &subs[0]);
     st |= wuji_hand_2_subscribe_fingertip_index_data(dev, on_fingertip_data, &ctxs[1], &subs[1]);
     st |= wuji_hand_2_subscribe_fingertip_middle_data(dev, on_fingertip_data, &ctxs[2], &subs[2]);
@@ -492,16 +775,28 @@ int main(void) {
         fprintf(stderr, "subscribe fingertip data: %s\n", wuji_last_error());
         goto cleanup_subs;
     }
-    printf("Subscribed to 5 fingertip data streams. Ctrl+C to stop.\n");
+    printf("\nSubscribed to 5 fingertip data streams. Ctrl+C to stop.\n\n");
     fflush(stdout);
 
-    while (!g_stop) sleep(1);
+    /* Redraw in place: five status lines, the table header, then one row per
+     * point. Every line clears itself, so a shorter line never leaves a tail. */
+    int rows = FINGER_COUNT + 2 + max_points;
+    int drawn = 0;
+    while (!g_stop) {
+        if (drawn) printf("\033[%dA", rows);
+        render(ctxs, max_points);
+        fflush(stdout);
+        drawn = 1;
+        usleep(REFRESH_US);
+    }
     printf("\nStopping...\n");
 
 cleanup_subs:
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < FINGER_COUNT; i++)
         if (subs[i]) wuji_sub_close(subs[i]); /* stop workers before releasing the device */
 cleanup:
+    for (int i = 0; i < FINGER_COUNT; i++)
+        if (ctxs[i].lock_ready) pthread_mutex_destroy(&ctxs[i].lock);
     wuji_dev_disconnect(dev);
     wuji_dev_release(dev);
     wuji_shutdown();
