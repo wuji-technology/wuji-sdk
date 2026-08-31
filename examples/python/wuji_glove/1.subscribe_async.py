@@ -111,24 +111,27 @@ async def main():
         return
 
     tasks = []
-    for i, dev in enumerate(gloves):
-        glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
-        print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
-        if args.hand_model_path is not None:
-            glove.hand_model_path().set(str(args.hand_model_path))
-            configured_path = glove.hand_model_path().get()
-            print(f"Set hand_model_path for {glove.serial_number}: {configured_path}")
-        tasks.extend([
-            print_tactile(glove),
-            print_tactile_zones(glove),
-            print_emf_poses(glove),
-            print_hand_joint_angles(glove),
-            print_hand_skeleton(glove),
-            print_tactile_point_cloud(glove),
-        ])
+    try:
+        for i, dev in enumerate(gloves):
+            glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
+            print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
+            if args.hand_model_path is not None:
+                glove.hand_model_path().set(str(args.hand_model_path))
+                configured_path = glove.hand_model_path().get()
+                print(f"Set hand_model_path for {glove.serial_number}: {configured_path}")
+            tasks.extend([
+                print_tactile(glove),
+                print_tactile_zones(glove),
+                print_emf_poses(glove),
+                print_hand_joint_angles(glove),
+                print_hand_skeleton(glove),
+                print_tactile_point_cloud(glove),
+            ])
 
-    print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
-    await asyncio.gather(*tasks)
+        print(f"Subscribed to {len(tasks)} streams. Ctrl+C to stop.\n")
+        await asyncio.gather(*tasks)
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

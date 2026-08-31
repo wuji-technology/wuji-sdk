@@ -23,8 +23,16 @@ endif()
 
 # RPATH so built binaries find libwuji_sdk_c.so without LD_LIBRARY_PATH.
 get_filename_component(_wuji_sdk_lib_dir "${WUJI_SDK_LIB}" DIRECTORY)
+find_package(Threads REQUIRED)
 
-foreach(demo 0_subscribe_joint_states 1_control_motion 2_hand_info 3_fingertip 4_set_stream_rate)
+foreach(demo
+        0_subscribe_joint_states
+        1_control_motion
+        2_hand_info
+        3_fingertip
+        4_set_stream_rate
+        5_export_flash_logs
+        7_mit_sweep)
     add_executable(${demo} ${demo}.c)
     target_include_directories(${demo} PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
     target_link_libraries(${demo} PRIVATE "${WUJI_SDK_LIB}")
@@ -34,8 +42,12 @@ foreach(demo 0_subscribe_joint_states 1_control_motion 2_hand_info 3_fingertip 4
         INSTALL_RPATH "\$ORIGIN/../../../../lib"
     )
 endforeach()
-target_link_libraries(1_control_motion PRIVATE m)  # sinf()/cosf()
-target_link_libraries(3_fingertip PRIVATE m)       # sin()/cos()/sqrt()
+
+add_subdirectory(6_opposition)
+
+target_link_libraries(1_control_motion PRIVATE m Threads::Threads)
+target_link_libraries(7_mit_sweep PRIVATE m Threads::Threads)
+target_link_libraries(3_fingertip PRIVATE m Threads::Threads)  # sin()/cos()/sqrt(), pthread
 
 message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
 message(STATUS "WUJI_SDK_LIB         = ${WUJI_SDK_LIB}")

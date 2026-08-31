@@ -48,17 +48,17 @@ def main():
 
     hands: list[WujiHand2] = []
     subscriptions = []
-    for i, dev in enumerate(hand_devices):
-        hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
-        print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
-        hands.append(hand)
-        subscriptions.append(
-            hand.joint_states().subscribe_with_callback(partial(on_joint_states, hand.device_name))
-        )
-
-    print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
-
     try:
+        for i, dev in enumerate(hand_devices):
+            hand = manager.connect(sn=dev.sn, device_name=f"hand_{i}")
+            print(f"Connected: {hand.serial_number} ({hand.online_joints_count().get()} joints online)")
+            hands.append(hand)
+            subscriptions.append(
+                hand.joint_states().subscribe_with_callback(partial(on_joint_states, hand.device_name))
+            )
+
+        print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
@@ -66,6 +66,7 @@ def main():
     finally:
         for sub in subscriptions:
             sub.close()
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

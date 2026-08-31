@@ -32,35 +32,38 @@ async def main():
         print("No Wuji Glove found among the scanned devices")
         return
 
-    glove = manager.connect(sn=gloves[0].sn, device_name="glove_0")
-    print(f"Connected: {glove.serial_number}")
-
-    # Create a recorder with LZ4 compression
-    recorder = TopicRecorder(compression="lz4")
-
-    # Register channels — each .subscribe() feeds data into the recorder
-    recorder.record(glove.tactile().subscribe())
-    recorder.record(glove.emf_poses().subscribe())
-    recorder.record(glove.hand_skeleton().subscribe())
-
-    # Start recording to an MCAP file
-    os.makedirs("./data", exist_ok=True)
-    path = f"./data/{datetime.now().strftime('%Y%m%d_%H%M%S')}.mcap"
-    print(f"Recording to {path} ...")
-    handle = await recorder.start(path)
-
     try:
-        # Record for 10 seconds, then stop
-        await asyncio.sleep(10)
-    finally:
-        stop_task = asyncio.ensure_future(handle.stop())
+        glove = manager.connect(sn=gloves[0].sn, device_name="glove_0")
+        print(f"Connected: {glove.serial_number}")
+
+        # Create a recorder with LZ4 compression
+        recorder = TopicRecorder(compression="lz4")
+
+        # Register channels — each .subscribe() feeds data into the recorder
+        recorder.record(glove.tactile().subscribe())
+        recorder.record(glove.emf_poses().subscribe())
+        recorder.record(glove.hand_skeleton().subscribe())
+
+        # Start recording to an MCAP file
+        os.makedirs("./data", exist_ok=True)
+        path = f"./data/{datetime.now().strftime('%Y%m%d_%H%M%S')}.mcap"
+        print(f"Recording to {path} ...")
+        handle = await recorder.start(path)
+
         try:
-            summary = await asyncio.shield(stop_task)
-        except asyncio.CancelledError:
-            summary = await stop_task
-        print(f"Done — {summary.total_frames} frames, "
-              f"{summary.file_size / 1024 / 1024:.2f} MB, "
-              f"{summary.duration_s:.1f}s")
+            # Record for 10 seconds, then stop
+            await asyncio.sleep(10)
+        finally:
+            stop_task = asyncio.ensure_future(handle.stop())
+            try:
+                summary = await asyncio.shield(stop_task)
+            except asyncio.CancelledError:
+                summary = await stop_task
+            print(f"Done — {summary.total_frames} frames, "
+                  f"{summary.file_size / 1024 / 1024:.2f} MB, "
+                  f"{summary.duration_s:.1f}s")
+    finally:
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

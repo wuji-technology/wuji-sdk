@@ -96,28 +96,28 @@ def main():
         return
 
     subscriptions = []
-    for i, dev in enumerate(gloves):
-        # By default, the SDK allows multiple clients (this script, Wuji Studio,
-        # a recorder, etc.) to connect to the same device concurrently.
-        # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
-        # for exclusive single-client use.
-        # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
-        glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
-        print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
-        if args.hand_model_path is not None:
-            glove.hand_model_path().set(str(args.hand_model_path))
-            configured_path = glove.hand_model_path().get()
-            print(f"Set hand_model_path for {glove.serial_number}: {configured_path}")
-        subscriptions.append(glove.tactile().subscribe_with_callback(partial(on_tactile, glove.device_name)))
-        subscriptions.append(glove.tactile_zones().subscribe_with_callback(partial(on_tactile_zones, glove.device_name)))
-        subscriptions.append(glove.emf_poses().subscribe_with_callback(partial(on_emf_poses, glove.device_name)))
-        subscriptions.append(glove.hand_joint_angles().subscribe_with_callback(partial(on_hand_joint_angles, glove.device_name)))
-        subscriptions.append(glove.hand_skeleton().subscribe_with_callback(partial(on_hand_skeleton, glove.device_name)))
-        subscriptions.append(glove.tactile_point_cloud().subscribe_with_callback(partial(on_tactile_point_cloud, glove.device_name)))
-
-    print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
-
     try:
+        for i, dev in enumerate(gloves):
+            # By default, the SDK allows multiple clients (this script, Wuji Studio,
+            # a recorder, etc.) to connect to the same device concurrently.
+            # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
+            # for exclusive single-client use.
+            # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
+            glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
+            print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
+            if args.hand_model_path is not None:
+                glove.hand_model_path().set(str(args.hand_model_path))
+                configured_path = glove.hand_model_path().get()
+                print(f"Set hand_model_path for {glove.serial_number}: {configured_path}")
+            subscriptions.append(glove.tactile().subscribe_with_callback(partial(on_tactile, glove.device_name)))
+            subscriptions.append(glove.tactile_zones().subscribe_with_callback(partial(on_tactile_zones, glove.device_name)))
+            subscriptions.append(glove.emf_poses().subscribe_with_callback(partial(on_emf_poses, glove.device_name)))
+            subscriptions.append(glove.hand_joint_angles().subscribe_with_callback(partial(on_hand_joint_angles, glove.device_name)))
+            subscriptions.append(glove.hand_skeleton().subscribe_with_callback(partial(on_hand_skeleton, glove.device_name)))
+            subscriptions.append(glove.tactile_point_cloud().subscribe_with_callback(partial(on_tactile_point_cloud, glove.device_name)))
+
+        print(f"Subscribed to {len(subscriptions)} streams. Ctrl+C to stop.\n")
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
@@ -125,6 +125,7 @@ def main():
     finally:
         for sub in subscriptions:
             sub.close()
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

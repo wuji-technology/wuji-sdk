@@ -198,35 +198,38 @@ def main() -> int:
     args = parse_args()
     set_log_level(args.log_level)
     manager = SdkManager.instance()
-    glove = connect_glove(manager, args)
-    print(
-        "Subscribing to tactile_residual. "
-        "Calibrate the glove first (7.tactile_calibration.py) if the grid stays near zero."
-    )
-
-    threshold = clamp_threshold(args.threshold)
-    view = ResidualView(threshold)
-    sub = glove.tactile_residual().subscribe_with_callback(callback=view)
-
-    deadline = time.monotonic() + args.seconds if args.seconds > 0 else None
-    interactive = False
     try:
-        interactive = sys.stdin is not None and sys.stdin.isatty()
-    except Exception:  # noqa: BLE001 - be conservative if stdin is odd
+        glove = connect_glove(manager, args)
+        print(
+            "Subscribing to tactile_residual. "
+            "Calibrate the glove first (7.tactile_calibration.py) if the grid stays near zero."
+        )
+
+        threshold = clamp_threshold(args.threshold)
+        view = ResidualView(threshold)
+        sub = glove.tactile_residual().subscribe_with_callback(callback=view)
+
+        deadline = time.monotonic() + args.seconds if args.seconds > 0 else None
         interactive = False
+        try:
+            interactive = sys.stdin is not None and sys.stdin.isatty()
+        except Exception:  # noqa: BLE001 - be conservative if stdin is odd
+            interactive = False
 
-    sys.stdout.write("\x1b[H\x1b[2Jwaiting for tactile_residual frames... (+/- threshold, q quit)\n")
-    sys.stdout.flush()
+        sys.stdout.write("\x1b[H\x1b[2Jwaiting for tactile_residual frames... (+/- threshold, q quit)\n")
+        sys.stdout.flush()
 
-    try:
-        if interactive:
-            run_interactive(view, threshold, deadline)
-        else:
-            run_noninteractive(deadline)
+        try:
+            if interactive:
+                run_interactive(view, threshold, deadline)
+            else:
+                run_noninteractive(deadline)
+        finally:
+            sub.close()
+            print("\nStopping.")
+        return 0
     finally:
-        sub.close()
-        print("\nStopping.")
-    return 0
+        manager.disconnect_all()
 
 
 if __name__ == "__main__":

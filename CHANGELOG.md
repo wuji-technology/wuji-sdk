@@ -7,6 +7,34 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
+## [2026.8.31]
+
+### Changed
+
+- Improved active **Wuji Hand 2** `joint_diagnostics` subscriptions with readable SDK logs for joint errors that appear, change, or clear, including the hexadecimal code, name, description, cause, suggested action, and clear policy. Held errors do not repeat. Python `JointDiagnosticsEntry` output now shows `0x2102(Overcurrent)` instead of `0x2102`, retains `0x0000` for zero, and shows `0xFFFF(Unknown)` for unknown codes.
+- Improved **Retargeting** pinch gestures with better thumb-to-fingertip contact in the Python and C SDKs.
+- Updated **Wuji Hand 2** fingertip sensor resultant-force application-point and orientation examples.
+- Updated **Wuji Glove** Python and C SDK API descriptions and examples to use “hand model calibration” instead of “IK calibration”.
+- Updated **Python SDK** examples to release devices on normal exit paths with `manager.disconnect_all()`. A connected device remains owned by `SdkManager` until you call `disconnect()` or `disconnect_all()`, or until the process exits. Dropping a device handle does not disconnect it, so long-running programs should disconnect explicitly.
+- Updated **Wuji Hand 2** fingertip tactile examples.
+
+### Added
+
+- Added standalone C and Python Wuji Hand 2 example 6 with bundled Right and Left replay files, device-handedness selection, a fixed 1 kHz command rate, and bounded-memory streaming. Each bundle validates its selected file before enable and sends every recorded qpos once without interpolation or resampling.
+- Added standalone C and Python Wuji Hand 2 example 7 with a fixed 0.02 rad, 101-command cosine sweep on joint 0. The other 19 joints remain at zero.
+- Added the **C SDK** `wuji_hand_2_decode_joint_status` function to decode Wuji Hand 2 joint status words into the four-state `ext_state`, an `enabled` convenience flag, and position, velocity, and current limit flags. Applications no longer need to parse status-word bits themselves.
+- Added **Wuji Hand 2** flash-log export through the blocking Python `hand.export_flash_logs()` and C `wuji_hand_2_export_flash_logs()` APIs. Exports default to `~/.wuji/logs/` as `flash_<serial>_<date>_<time>.jsonl` unless you provide an output directory, and exports in the same second receive numbered names. Firmware without on-flash logs reports that export is unsupported. On firmware v2.6.0 or later, concurrent exports of the same device either complete in full or report that the device is busy. Earlier firmware cannot detect concurrent exports, so export one at a time.
+- Added **Wuji Glove** `wuji_glove_get_tactile_binary_sensitivity` to read the effective contact sensitivity for the connected glove. It reports the default value of 1.0 until changed and clamps stored values to the runtime range of 0.5–3.0.
+
+### Fixed
+
+- Fixed **Wuji Hand 2** Python joint handles so indexes outside `0..=19` raise `ValueError` immediately. Previously, invalid indexes could create handles whose metadata raised `PanicException` or exposed the invalid index.
+- Fixed reads of defined but unwritten SDK parameters to raise `Parameter not set` instead of `Path not found`. `Path not found` now identifies only paths that do not exist. The C SDK continues returning `WUJI_STATUS_ERR_NOT_FOUND` for both cases, while `wuji_last_error()` distinguishes them.
+- Fixed **Wuji Glove** fused IMU orientation and wrist transforms when device timestamps switch to synchronized time after connection. The switch no longer causes an orientation jump.
+- Fixed **Python SDK** and **C SDK** user-data preview and import to reject unsupported user names before changing existing data. The error message identifies the rejected user.
+- Corrected **Wuji Hand 2** `describe_error()` to return a `dict` with type hints for all eight keys. Read values by key, such as `info["severity"]`, instead of as attributes.
+- Fixed **Python SDK** and **C SDK** connections to addresses without a port to report that a port is required. For example, use `192.168.1.110:7447` instead of `192.168.1.110`.
+
 ## [2026.8.17]
 
 ### Added
@@ -296,7 +324,8 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...HEAD
+[2026.8.31]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...v2026.8.31
 [2026.8.17]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...v2026.8.17
 [2026.8.3]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...v2026.8.3
 [2026.7.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.14...v2026.7.21
