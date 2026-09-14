@@ -67,11 +67,18 @@ static void on_joint_state(WujiFrameKind kind, const WujiJointStateFrame *f, voi
     printf("seq=%u  frame_id=%s  ts=%lluus  num_joints=%u  (frame #%lu)\n",
            f->header.seq, f->header.frame_id, (unsigned long long)f->header.timestamp_us,
            f->num_joints, (unsigned long)fr);
-    printf("  %-4s %12s %12s %10s\n", "nid", "position", "velocity", "effort");
+    printf("  %-4s %-6s %12s %12s %10s\n", "nid", "joint", "position", "velocity", "effort");
     for (size_t i = 0; i < f->joints_len; i++) {
         const WujiJointStateEntry *e = &f->joints[i];
-        printf("  %-4u %12.4f %12.4f %10.4f\n",
-               e->nid, e->position, e->velocity, e->effort);
+        /* Map the stream nid to the flat 0..19 joint index (the subscript used
+         * by command arrays) with the official SDK helper. */
+        uint8_t joint_index = 0u;
+        char joint[8] = "-";
+        if (wuji_hand_2_nid_to_joint_index(e->nid, &joint_index) == WUJI_STATUS_OK) {
+            snprintf(joint, sizeof(joint), "%u", (unsigned)joint_index);
+        }
+        printf("  %-4u %-6s %12.4f %12.4f %10.4f\n",
+               e->nid, joint, e->position, e->velocity, e->effort);
     }
     fflush(stdout); /* flush live output when piped (tee/grep) */
 }

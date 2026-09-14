@@ -6,10 +6,12 @@ SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other perip
 
 ## SDKs
 
-| Language | Install | Docs | Examples |
-|----------|---------|------|----------|
-| **Python** | `pip install wuji-sdk` | [examples/python/README.md](examples/python/README.md) | [examples/python/](examples/python/) |
-| **C** | Prebuilt tarball on each [Release](https://github.com/wuji-technology/wuji-sdk/releases) | [examples/c/README.md](examples/c/README.md) | [examples/c/](examples/c/) |
+| Language | Install | Examples |
+|----------|---------|----------|
+| **Python** | `pip install wuji-sdk` | [examples/python/](examples/python/) |
+| **C** | Prebuilt tarball on each [Release](https://github.com/wuji-technology/wuji-sdk/releases) | [examples/c/](examples/c/) |
+
+Each language folder under examples/ includes a README covering setup and API usage.
 
 The Python SDK is the primary, full-featured interface. The C SDK exposes a C API (`libwuji_sdk_c.so` + `wuji_sdk.h`) for native/embedded integration.
 
@@ -17,13 +19,13 @@ The Python SDK is the primary, full-featured interface. The C SDK exposes a C AP
 
 ```text
 ├── examples/
-│   ├── python/              # Python SDK docs (README) + examples (pip install wuji-sdk)
+│   ├── python/              # Python SDK examples and docs (pip install wuji-sdk)
 │   │   ├── README.md
 │   │   ├── wuji_glove/
 │   │   ├── wuji_hand/
 │   │   ├── wuji_hand_2/
 │   │   └── retargeting/     # map hand keypoints → joint commands
-│   └── c/                   # C SDK docs (README) + examples (prebuilt tarball from Releases)
+│   └── c/                   # C SDK examples and docs (prebuilt tarball from Releases)
 │       ├── README.md
 │       ├── wuji_glove/
 │       ├── wuji_hand/
