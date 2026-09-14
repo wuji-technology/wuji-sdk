@@ -5,11 +5,9 @@
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include <time.h>
 
 #include "wuji_sdk.h"
@@ -18,11 +16,6 @@
 #define AMPLITUDE_RAD 0.02f
 #define SWEEP_INTERVALS 100u
 #define COMMAND_INTERVAL_NS 20000000L
-#define RAMP_DURATION_NS 1000000000L
-#define RAMP_INTERVAL_NS 1000000L
-#define RAMP_STEPS (RAMP_DURATION_NS / RAMP_INTERVAL_NS)
-#define CAPTURE_ATTEMPTS 400u
-#define CAPTURE_WAIT_NS 5000000L
 #define PI_VALUE 3.14159265358979323846
 
 static volatile sig_atomic_t g_stop = 0;
@@ -33,9 +26,9 @@ static void on_sigint(int signal_number) {
     g_stop = 1;
 }
 
-/* Sleep for one command interval, in nanoseconds. */
-static int sleep_ns(long interval_ns) {
-    struct timespec duration = {0, interval_ns};
+/* Sleep for one fixed command interval. */
+static int sleep_interval(void) {
+    struct timespec duration = {0, COMMAND_INTERVAL_NS};
     while (nanosleep(&duration, &duration) != 0) {
         if (errno != EINTR || g_stop) return -1;
     }
@@ -91,119 +84,7 @@ static int send_sweep(struct WujiJointCommandPublisher *publisher) {
             != WUJI_STATUS_OK) {
             return -1;
         }
-        if (frame_index < SWEEP_INTERVALS && sleep_ns(COMMAND_INTERVAL_NS) != 0) {
-            return g_stop ? -2 : -1;
-        }
-    }
-    return 0;
-}
-
-/* Capture state: the worker thread fills flat-20 positions and sets ready. */
-typedef struct {
-    _Atomic int ready;
-    float positions[JOINT_COUNT];
-} capture_ctx_t;
-
-/* Scatter one frame into flat-20 command order via the SDK nid mapping.
- * Reject frames that do not carry exactly the 20 joint nids — a tactile-slot
- * or out-of-range nid fails wuji_hand_2_nid_to_joint_index, and a duplicate
- * or missing joint leaves the seen-mask incomplete. */
-static int frame_to_positions(const WujiJointStateFrame *frame,
-                              float positions[JOINT_COUNT]) {
-    uint32_t seen = 0u;
-    size_t index;
-
-    if (frame->joints_len != JOINT_COUNT) return -1;
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        uint8_t joint_index = 0u;
-        if (wuji_hand_2_nid_to_joint_index(frame->joints[index].nid,
-                                           &joint_index)
-                != WUJI_STATUS_OK) {
-            return -1;
-        }
-        if (seen & (1u << joint_index)) return -1;
-        seen |= 1u << joint_index;
-        positions[joint_index] = frame->joints[index].position;
-    }
-    return seen == ((1u << JOINT_COUNT) - 1u) ? 0 : -1;
-}
-
-/* Record one complete joint_states frame into the capture context. */
-static void on_capture_frame(WujiFrameKind kind,
-                             const WujiJointStateFrame *frame,
-                             void *user_data) {
-    capture_ctx_t *ctx = (capture_ctx_t *)user_data;
-
-    if (kind != WUJI_FRAME_KIND_OK || frame == NULL) return;
-    if (frame_to_positions(frame, ctx->positions) == 0) {
-        atomic_store_explicit(&ctx->ready, 1, memory_order_release);
-    }
-}
-
-/* Wait for one complete joint_states frame; -1 timeout, -2 stop, -3 subscribe. */
-static int capture_start_positions(struct WujiDevice *hand,
-                                   float start[JOINT_COUNT]) {
-    capture_ctx_t ctx;
-    struct WujiSub *subscription = NULL;
-    struct timespec wait = {0, CAPTURE_WAIT_NS};
-    size_t attempt;
-    int captured;
-
-    memset(&ctx, 0, sizeof(ctx));
-    if (wuji_hand_2_subscribe_joint_states(hand, on_capture_frame, &ctx,
-                                           &subscription)
-        != WUJI_STATUS_OK) {
-        return -3;
-    }
-    for (attempt = 0u; attempt < CAPTURE_ATTEMPTS && !g_stop; ++attempt) {
-        if (atomic_load_explicit(&ctx.ready, memory_order_acquire)) break;
-        nanosleep(&wait, NULL);
-    }
-    wuji_sub_close(subscription);
-    if (g_stop) return -2;
-    captured = atomic_load_explicit(&ctx.ready, memory_order_acquire);
-    if (captured) memcpy(start, ctx.positions, sizeof(ctx.positions));
-    return captured ? 0 : -1;
-}
-
-/* Blend one command between start and target by a 0..1 ratio. */
-static void blend_command(const float start[JOINT_COUNT],
-                          const float target[JOINT_COUNT],
-                          double ratio,
-                          struct WujiJointCommand commands[JOINT_COUNT]) {
-    size_t index;
-
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        commands[index].position =
-            start[index] + (target[index] - start[index]) * (float)ratio;
-        commands[index].velocity = 0.0f;
-        commands[index].effort = 0.0f;
-    }
-}
-
-/* Ease from the captured pose to the opening frame with a cosine profile. */
-static int send_ramp(struct WujiJointCommandPublisher *publisher,
-                     const float start[JOINT_COUNT]) {
-    struct WujiJointCommand target_commands[JOINT_COUNT];
-    struct WujiJointCommand commands[JOINT_COUNT];
-    float target[JOINT_COUNT];
-    size_t index;
-    size_t step;
-
-    generate_command(0u, target_commands);
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        target[index] = target_commands[index].position;
-    }
-    for (step = 1u; step <= RAMP_STEPS; ++step) {
-        const double ratio =
-            0.5 * (1.0 - cos(PI_VALUE * (double)step / (double)RAMP_STEPS));
-        if (g_stop) return -2;
-        blend_command(start, target, ratio, commands);
-        if (wuji_joint_command_publisher_send(publisher, commands)
-            != WUJI_STATUS_OK) {
-            return -1;
-        }
-        if (step < RAMP_STEPS && sleep_ns(RAMP_INTERVAL_NS) != 0) {
+        if (frame_index < SWEEP_INTERVALS && sleep_interval() != 0) {
             return g_stop ? -2 : -1;
         }
     }
@@ -220,7 +101,6 @@ static int run_device(void) {
     int cleanup_failed = 0;
     int exit_code = 1;
     int send_result;
-    float start[JOINT_COUNT];
 
     if (wuji_init(&init_options) != WUJI_STATUS_OK) {
         fprintf(stderr, "error: wuji_init failed: %s\n", wuji_last_error());
@@ -247,26 +127,7 @@ static int run_device(void) {
                 wuji_last_error());
         goto cleanup;
     }
-    send_result = capture_start_positions(hand, start);
-    if (send_result == -2) {
-        exit_code = 130;
-        goto cleanup;
-    }
-    if (send_result == -3) {
-        fprintf(stderr, "error: subscribe joint_states failed: %s\n",
-                wuji_last_error());
-        goto cleanup;
-    }
-    if (send_result != 0) {
-        fprintf(stderr, "error: no complete joint_states frame to ramp from\n");
-        goto cleanup;
-    }
-    send_result = send_ramp(publisher, start);
-    if (send_result == -1) {
-        fprintf(stderr, "error: send ramp failed: %s\n", wuji_last_error());
-        goto cleanup;
-    }
-    if (send_result == 0) send_result = send_sweep(publisher);
+    send_result = send_sweep(publisher);
     if (send_result == -2) {
         exit_code = 130;
     } else if (send_result == 0) {
