@@ -7,44 +7,6 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
-## [2026.9.14]
-
-### Added
-
-- Added **Wuji Hand 2** joint-numbering conversion helpers. Python `WujiHand2.nid_to_joint_index()` and `WujiHand2.joint_index_to_nid()` (C: `wuji_hand_2_nid_to_joint_index()` / `wuji_hand_2_joint_index_to_nid()`) convert between the stream `nid` carried by `JointStateEntry.nid` and the flat 0–19 joint index used by command arrays. Invalid inputs raise `WujiException` in Python and return `WUJI_STATUS_ERR_INVALID_ARG` in C.
-
-- Added **Wuji Hand 2** per-joint feed-forward switches (Python and C), each also available whole-hand with an optional joint mask: `constant` (Python: `hand.set_constant(mode)`, C: `wuji_hand_2_set_constant`, where `mode` is a `FeedForwardMode`) and `position_table` (Python: `hand.set_position_table(on)`, C: `wuji_hand_2_set_position_table`). Requires Wuji Hand 2 firmware v2.7.0 or later. The constant and position_table enable state reverts to the saved or default configuration on reboot.
-
-### Changed
-
-- **Wuji Hand 2**: With Wuji Hand 2 firmware v2.7.0 or later, when sharing a device through the SDK Bridge, only the directly connected application can write to the device. Other applications can read data and receive live updates.
-- **Wuji Hand 2**: Joint-error descriptions, causes, and suggested actions are now in English instead of Chinese. Error codes and names are unchanged.
-- **BREAKING (Python SDK)**: SDK-originated failures from all public operations now raise `WujiException` or one of its subclasses. Catch `WujiException` at the SDK boundary, and SDK-side value-conversion failures also use `WujiException`. Previously, these failures could surface as `ValueError`, `TypeError`, `RuntimeError`, `TimeoutError`, `PermissionError`, or `OSError`. Python runtime argument-type or overflow errors raised before the SDK call retain their native exception types.
-- **Wuji Hand 2**: hands running firmware 2.7.0 or later accept SDK connections on port 50001 instead of port 7447. SDK device discovery picks the right port automatically. Applications that connect to port 7447 directly must switch to 50001, and firewall rules that only allow 7447 need updating.
-- **Wuji Hand 2**: The fingertip examples in C and Python now skip a finger whose sensor info cannot be read and keep decoding the rest, instead of ending the whole program on the first failure. A fingertip reports its own info, so a finger can be without info for a while: no sensor fitted, older sensor firmware, or a read taken right after power-on while the hand is still collecting it. The examples stop only when no finger has info.
-- **Retargeting**: The Wuji Hand 2 live teleoperation examples (`examples/python/retargeting/1.teleop_real.py` and `examples/c/retargeting/1_teleop_real.c`) now drive the hand with stiffer default MIT impedance gains, broadcasting `(kp, kd) = (5.0, 0.1)` to all joints. The previous default was `(3.0, 0.05)`.
-
-### Removed
-
-- **Wuji Hand 2 — BREAKING for Python and C**: Removed the fingertip info call that took a finger argument, Python `hand.get_fingertip_info(finger)` and C `wuji_hand_2_get_fingertip_info(dev, finger, &out)`. Each finger now has its own accessor that takes no argument: Python `hand.fingertip_thumb_info().get()` and C `wuji_hand_2_get_fingertip_thumb_info(dev, &out)`, and the same for `index`, `middle`, `ring` and `pinky`. The new names match the per-finger data streams you already use, `fingertip_thumb_data` and `wuji_hand_2_subscribe_fingertip_thumb_data`. There is no compatibility shim: Python raises `AttributeError` on the old name, and C fails to link against the removed symbol. Struct layouts are unchanged, so an old binary fails loudly rather than misreading data.
-- **Wuji Hand 2 — BREAKING**: Use Python `WujiHand2.nid_to_joint_index()` (C: `wuji_hand_2_nid_to_joint_index()`) to decode stream nids. Python `WujiHand2.joint_id_from_bus_node()` and C `wuji_hand_2_joint_id_from_bus_node()` have been removed because they computed the node-bitmap bit space, not the firmware stream encoding their documentation claimed, so decoding stream nids with them silently misassigned joints.
-
-### Fixed
-
-- Fixed SDK operations through a device handle after disconnect raising `Internal error` for the protocol session, or `Resource not found` for topic subscriptions. Operations on a disconnected handle now raise `WujiException` with a disconnect message.
-
-- Fixed read and write timeouts when sharing multiple devices from the same application.
-- Fixed connection failures when accessing a shared device from another application.
-
-- **Wuji Hand 2**: Fixed C example 6 using one generic message for every failure. It now reports which step failed and includes the SDK error message when available. If no device is found, it prompts you to check device power and network access.
-- **Wuji Hand 2**: Fixed `sdk_dropped` in the `joint_diagnostics` communication summary missing frames dropped at some SDK-internal processing stages. Previously those drops were only logged, so `sdk_dropped` could stay at 0 while `header.seq` showed gaps. Frames dropped at every SDK-internal stage are now counted.
-- **Wuji Hand 2**: Fixed a firmware upgrade that could stop responding on the host and never finish after the hand rebooted into the new firmware, even though the hand itself had upgraded successfully.
-- **Wuji Hand 2**: Fixed motion examples 6 and 7 snapping the hand straight from whatever pose it was in at launch, because the first command was a fixed zero pose. The examples now read the current pose from `joint_states` on start and ease to the trajectory start over about one second before the fixed sequence.
-- **C SDK**: Fixed `wuji_hand_2_describe_error` leaving stale data in the `WujiErrorInfo` you pass in when it returns `WUJI_STATUS_ERR_NOT_FOUND`, including for code `0`. Reusing one struct across calls could return the previous result. Text fields that cannot hold the full text are now left empty instead of being truncated.
-- **Wuji Hand 2**: Fixed the new connection being dropped about two seconds after reconnecting right after a disconnect. The reconnected connection now stays alive.
-- Fixed cross-process device discovery and sharing failing on Linux hosts with IPv6 disabled.
-- Recorded MCAP messages now retain a topic's source event time when it is available, while preserving the host receive time separately. Previously both timestamps used the host receive time, which shifted timelines and cross-topic alignment by transport and buffering latency.
-
 ## [2026.8.31]
 
 ### Changed
@@ -58,7 +20,7 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ### Added
 
-- Added standalone C and Python Wuji Hand 2 example 6 with bundled right- and left-hand replay files, device-handedness selection, a fixed 1 kHz command rate, and bounded-memory streaming. Each bundle validates its selected file before enabling the hand and sends every recorded `qpos` frame once without interpolation or resampling.
+- Added standalone C and Python Wuji Hand 2 example 6 with bundled Right and Left replay files, device-handedness selection, a fixed 1 kHz command rate, and bounded-memory streaming. Each bundle validates its selected file before enable and sends every recorded qpos once without interpolation or resampling.
 - Added standalone C and Python Wuji Hand 2 example 7 with a fixed 0.02 rad, 101-command cosine sweep on joint 0. The other 19 joints remain at zero.
 - Added the **C SDK** `wuji_hand_2_decode_joint_status` function to decode Wuji Hand 2 joint status words into the four-state `ext_state`, an `enabled` convenience flag, and position, velocity, and current limit flags. Applications no longer need to parse status-word bits themselves.
 - Added **Wuji Hand 2** flash-log export through the blocking Python `hand.export_flash_logs()` and C `wuji_hand_2_export_flash_logs()` APIs. Exports default to `~/.wuji/logs/` as `flash_<serial>_<date>_<time>.jsonl` unless you provide an output directory, and exports in the same second receive numbered names. Firmware without on-flash logs reports that export is unsupported. On firmware v2.6.0 or later, concurrent exports of the same device either complete in full or report that the device is busy. Earlier firmware cannot detect concurrent exports, so export one at a time.
@@ -362,8 +324,7 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.9.14...HEAD
-[2026.9.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...v2026.9.14
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...HEAD
 [2026.8.31]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...v2026.8.31
 [2026.8.17]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...v2026.8.17
 [2026.8.3]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...v2026.8.3

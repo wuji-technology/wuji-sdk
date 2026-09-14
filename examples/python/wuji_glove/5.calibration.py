@@ -417,7 +417,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nCalibration cancelled.")
         raise SystemExit(130)
-    except WujiException as e:
+    except (WujiException, RuntimeError) as e:
         print(f"Error: {e}")
         raise SystemExit(1) from e
     finally:
