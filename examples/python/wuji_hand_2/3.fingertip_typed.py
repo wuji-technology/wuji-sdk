@@ -80,13 +80,30 @@ def mat_mul(a, b):
                  for i in range(3))
 
 
+
+def info_accessors(hand):
+    """This hand's five info accessors, in FINGERS order.
+
+    One accessor per finger, named for that finger; `.get()` takes no argument.
+    Listed explicitly rather than looked up by name so a rename is a compile-time
+    break in the SDK, not a runtime AttributeError here.
+    """
+    return [
+        hand.fingertip_thumb_info(),
+        hand.fingertip_index_info(),
+        hand.fingertip_middle_info(),
+        hand.fingertip_ring_info(),
+        hand.fingertip_pinky_info(),
+    ]
+
+
 def fetch_format(hand, finger):
     """GET the finger's info and return its format JSON (the data-frame layout).
 
     The SDK drives the chunked info read internally and hands back a decoded
     FingertipSensorInfo; we only read its `format` string.
     """
-    info = hand.get_fingertip_info(finger)
+    info = info_accessors(hand)[finger].get()
     fmt = json.loads(info.format)
     if fmt["v"] != 1 or fmt["encoding"] != "point_array":
         raise ValueError(f"unsupported format: {fmt.get('encoding')}")
@@ -215,7 +232,18 @@ def main():
     decoders, thresholds, units, placements, digests, point_counts = {}, {}, {}, {}, {}, {}
     force_rots = {}
     for i, name in enumerate(FINGERS):
-        fmt, digests[name] = fetch_format(hand, i)
+        # info comes from the sensor itself, so a finger can legitimately have
+        # none: no sensor fitted, sensor firmware too old to describe itself, or
+        # the hand still reading it right after power-up. Skip that finger and
+        # keep the rest usable rather than ending the run.
+        try:
+            fmt, digests[name] = fetch_format(hand, i)
+        except Exception as exc:
+            print(f"  {name}: no info ({exc}); skipping this finger")
+            # The point table still renders a column per finger, so give the
+            # skipped one a zero count instead of leaving the key absent.
+            point_counts[name] = 0
+            continue
         # Rotation that takes the aggregate force into the link frame:
         # R(base_rpy) @ R(aggregate_rpy). Firmware without aggregate_rpy leaves the
         # aggregate axes undeclared, and the only sane reading is the sensor frame.
@@ -240,20 +268,29 @@ def main():
             where += f", aggregate force acts at ({x:+.2f},{y:+.2f},{z:+.2f})mm"
         print(f"  {name}: {fmt['point_count']} points, per-point unit={units[name]}, "
               f"contact>{thresholds[name]}, {where}")
+    if not decoders:
+        print()
+        print("No fingertip reported its info; nothing to decode. Update the "
+              "fingertip sensor firmware, or retry once the hand has finished "
+              "reading the sensors after power-up.")
+        return
     if any(p is None for p in placements.values()):
         print("  (update the hand firmware to get contact positions on the hand model)")
 
     # Typed data subscriptions; each frame is a FingertipSensorData
     # (.header / .info_digest / .data).
-    subs = {
-        "thumb": hand.fingertip_thumb_data().subscribe(),
-        "index": hand.fingertip_index_data().subscribe(),
-        "middle": hand.fingertip_middle_data().subscribe(),
-        "ring": hand.fingertip_ring_data().subscribe(),
-        "pinky": hand.fingertip_pinky_data().subscribe(),
+    # Subscribe only to fingers that reported info: without info there is no
+    # decoder, so the bytes arriving on that stream are an opaque blob.
+    all_subs = {
+        "thumb": hand.fingertip_thumb_data,
+        "index": hand.fingertip_index_data,
+        "middle": hand.fingertip_middle_data,
+        "ring": hand.fingertip_ring_data,
+        "pinky": hand.fingertip_pinky_data,
     }
+    subs = {name: acc().subscribe() for name, acc in all_subs.items() if name in decoders}
 
-    print(f"\nSubscribed to 5 finger streams, running {DURATION}s (Ctrl+C to stop)\n")
+    print(f"\nSubscribed to {len(subs)} finger stream(s), running {DURATION}s (Ctrl+C to stop)\n")
     latest = {name: None for name in FINGERS}
     lines_ready = False
     max_points = max(point_counts.values())
@@ -268,6 +305,9 @@ def main():
             lines = []
             decoded = dict.fromkeys(FINGERS)
             for name in FINGERS:
+                if name not in decoders:
+                    lines.append(f"{name:<7} no info from this sensor; cannot decode")
+                    continue
                 frame = latest[name]
                 if frame is None:
                     lines.append(f"{name:<7} waiting for data...")
@@ -276,6 +316,11 @@ def main():
                 # Two revisions can share a payload length while differing in
                 # scale, unit or mounting pose, so a length check is not enough;
                 # on mismatch a real application re-fetches info.
+                # A zero digest means the device currently has no info for this
+                # finger, so there is nothing to re-fetch.
+                if frame.info_digest == 0:
+                    lines.append(f"{name:<7} sensor reports no info; cannot decode")
+                    continue
                 if frame.info_digest != digests[name]:
                     lines.append(f"{name:<7} info changed "
                                  f"(0x{frame.info_digest:08x} != 0x{digests[name]:08x}); re-GET info")
