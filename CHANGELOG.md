@@ -9,8 +9,6 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [2026.9.21]
 
-## [2026.9.14]
-
 ### Added
 
 - Added **Wuji Hand 2** joint-numbering conversion helpers. Python `WujiHand2.nid_to_joint_index()` and `WujiHand2.joint_index_to_nid()` (C: `wuji_hand_2_nid_to_joint_index()` / `wuji_hand_2_joint_index_to_nid()`) convert between the stream `nid` carried by `JointStateEntry.nid` and the flat 0–19 joint index used by command arrays. Invalid inputs raise `WujiException` in Python and return `WUJI_STATUS_ERR_INVALID_ARG` in C.
@@ -365,8 +363,7 @@ and this project uses calendar versioning (YYYY.M.D).
 - Wuji Glove - Glove with tactile and EMF sensors
 
 [Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.9.21...HEAD
-[2026.9.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.9.14...v2026.9.21
-[2026.9.14]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...v2026.9.14
+[2026.9.21]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...v2026.9.21
 [2026.8.31]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...v2026.8.31
 [2026.8.17]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...v2026.8.17
 [2026.8.3]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.7.21...v2026.8.3
