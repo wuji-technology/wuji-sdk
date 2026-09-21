@@ -142,7 +142,7 @@ static int configure_wuji_hand_2(struct WujiDevice *dev)
         return -1;
     }
     float kp[NUM_JOINTS], kd[NUM_JOINTS];
-    for (int i = 0; i < NUM_JOINTS; i++) { kp[i] = 3.0f; kd[i] = 0.05f; }
+    for (int i = 0; i < NUM_JOINTS; i++) { kp[i] = 5.0f; kd[i] = 0.1f; }
     if (wuji_hand_2_set_all_mit_params(dev, kp, kd) != WUJI_STATUS_OK) {
         fprintf(stderr, "set_all_mit_params: %s\n", wuji_last_error());
         return -1;

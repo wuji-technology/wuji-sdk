@@ -64,7 +64,7 @@ def configure_wuji_hand_2(hand):
     # MIT impedance: hold each joint softly at its commanded position. The
     # firmware defaults to MIT control mode (control mode is not set from Python).
     hand.effort_limit().set(1.5)  # Amps, broadcast to all joints
-    hand.mit_params().set((3.0, 0.05))  # (kp, kd) tuple, broadcast to all joints
+    hand.mit_params().set((5.0, 0.1))  # (kp, kd) tuple, broadcast to all joints
     hand.enable()
     return HandModel.WujiHand2
 
