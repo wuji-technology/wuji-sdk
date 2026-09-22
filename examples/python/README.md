@@ -59,25 +59,28 @@ More examples: [examples/python/](https://github.com/wuji-technology/wuji-sdk/tr
 ### Wuji Hand 2 Motion Examples
 
 > [!WARNING]
-> Examples 6 and 7 enable motor control and send position commands. Keep the
-> hand clear of people, cables, and the bench. Run with direct supervision,
-> and be ready to stop the device.
+> Examples 6 and 7 enable motor control and send position commands. On start
+> they read the current pose from `joint_states` and ease the hand to the
+> trajectory start over about one second, so the hand begins moving toward a
+> fully extended pose immediately after launch. Keep the hand clear of people,
+> cables, and the bench, place it in a safe pose before running, run with
+> direct supervision, and be ready to stop the device.
 
 Example 7 is a standalone source file. Example 6 is a standalone bundle that
 contains `opposition.py` and Right and Left replay data. Copy the complete
 `6_opposition/` directory to use that example.
 
 Both entries accept no command-line options. They auto-connect one device,
-require all 20 joints online, enable the hand, and send a fixed command
-sequence. Example 6 selects and streams one replay file from device
-handedness.
+require all 20 joints online, enable the hand, ramp from the current pose to
+the trajectory start, and then send a fixed command sequence. Example 6
+selects and streams one replay file from device handedness.
 
 #### Choose Example 6 or 7
 
 | Example | Motion | Output |
 | --- | --- | --- |
-| `7.mit_sweep.py` | Moves joint 0 through a fixed 0.02 rad, 101-command cosine sweep while the other joints stay at zero | Publishes at 50 Hz, then disables and disconnects |
-| `6_opposition/opposition.py` | Streams the connected side's recorded thumb opposition | Publishes 30,000 commands at 1 kHz, then disables and disconnects |
+| `7.mit_sweep.py` | Moves joint 0 through a fixed 0.02 rad, 101-command cosine sweep while the other joints stay at zero | Ramps to the start pose at 1 kHz, publishes the sweep at 50 Hz, then disables and disconnects |
+| `6_opposition/opposition.py` | Streams the connected side's recorded thumb opposition | Ramps to the start pose at 1 kHz, publishes 30,000 recorded commands at 1 kHz, then disables and disconnects |
 
 Example 7 is the smaller motion check. Example 6 replays a complete recorded
 four-finger motion.
@@ -103,9 +106,11 @@ python examples/python/wuji_hand_2/6_opposition/opposition.py
 
 Example 6 selects `data/right.replay` or `data/left.replay` from device
 handedness. It validates the file header and length before enable, then streams
-every recorded qpos once at a fixed 1 kHz command rate. It doesn't add
-interpolation, resampling, smoothing, or recovery motion. The final recorded
-frame is the return to Open.
+every recorded qpos once at a fixed 1 kHz command rate. The recorded sequence
+itself adds no interpolation, resampling, smoothing, or recovery motion; before
+it starts, the example ramps from the captured current pose to the first
+recorded frame over about one second. The final recorded frame is the return
+to Open.
 
 #### Cleanup Behavior
 

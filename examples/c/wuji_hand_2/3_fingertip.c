@@ -3,7 +3,8 @@
  *
  * The fingertip sensor is self-describing. This example:
  *   - reads each finger's info with ONE high-level call,
- *     wuji_hand_2_get_fingertip_info() -> WujiFingertipSensorInfo. The SDK
+ *     wuji_hand_2_get_fingertip_<finger>_info() -> WujiFingertipSensorInfo:
+ *     one function per finger, no finger parameter. The SDK
  *     drives the chunked info read internally; the caller never sees the
  *     chunked-read transport. `info.format` is a JSON string describing the
  *     data-frame layout (a point array) and where that array sits on the hand.
@@ -265,6 +266,7 @@ typedef enum {
     FINGER_ERRORED,
     FINGER_INFO_CHANGED,
     FINGER_BAD_LENGTH,
+    FINGER_NO_INFO,
 } finger_state_t;
 
 /* Everything a finger's callback needs, all derived from that finger's format,
@@ -280,6 +282,7 @@ typedef struct {
     double      agg_scale[4];
     double      contact;            /* |F| above this counts as contact, in `unit` */
     uint32_t    digest;             /* info revision this decoder was built from */
+    int         has_info;           /* info was read and decoded; 0 = nothing to show */
     int         placed;             /* mount pose present in this firmware */
     double      pos[MAX_POINTS][3];    /* point position in tip_sensor_frame, metres */
     double      axes[MAX_POINTS][3][3]; /* rotates that point's force into the same frame */
@@ -501,6 +504,17 @@ static void on_fingertip_data(WujiFrameKind kind, const WujiFingertipSensorData 
     if (kind == WUJI_FRAME_KIND_ERROR) { set_state(ctx, FINGER_ERRORED); return; }
     if (kind != WUJI_FRAME_KIND_OK || !f || !f->data) return;
 
+    /* Without info there is no decoder: the payload is an opaque blob. Keep the
+     * status line explaining why rather than overwriting it with frame states. */
+    if (!ctx->has_info) return;
+
+    /* A zero info_digest means the device currently has no info for this finger,
+     * so there is nothing to re-fetch; keep it distinct from a revision change. */
+    if (f->info_digest == 0) {
+        set_state(ctx, FINGER_NO_INFO);
+        return;
+    }
+
     /* info_digest binds the frame to a specific info revision. Two revisions can
      * share a payload length while differing in scale, unit or mounting pose, so
      * check it before decoding — a length check alone would let this decoder keep
@@ -607,6 +621,7 @@ static const char *state_text(const snapshot_t *s) {
         case FINGER_ERRORED:      return "stream error";
         case FINGER_INFO_CHANGED: return "info changed; re-GET info";
         case FINGER_BAD_LENGTH:   return "unexpected payload length";
+        case FINGER_NO_INFO:      return "no info from this sensor; cannot decode";
         default:                  return "waiting for data...";
     }
 }
@@ -732,22 +747,44 @@ int main(void) {
     /* Read each finger's self-describing info (high-level; chunked read hidden)
      * and derive its decoder plus where its points sit on the hand. */
     const char *names[FINGER_COUNT] = { "thumb", "index", "middle", "ring", "pinky" };
+    /* One reader per finger: the finger is in the function name, not an argument. */
+    WujiStatus (*const read_info[FINGER_COUNT])(struct WujiDevice *, WujiFingertipSensorInfo *) = {
+        wuji_hand_2_get_fingertip_thumb_info,
+        wuji_hand_2_get_fingertip_index_info,
+        wuji_hand_2_get_fingertip_middle_info,
+        wuji_hand_2_get_fingertip_ring_info,
+        wuji_hand_2_get_fingertip_pinky_info,
+    };
     finger_ctx_t ctxs[FINGER_COUNT];
     int max_points = 0;
     memset(ctxs, 0, sizeof ctxs);
+    int with_info = 0;
     for (uint8_t i = 0; i < FINGER_COUNT; i++) {
-        WujiFingertipSensorInfo info;
-        if (wuji_hand_2_get_fingertip_info(dev, i, &info) != WUJI_STATUS_OK) {
-            fprintf(stderr, "get_fingertip_info(%s): %s\n", names[i], wuji_last_error());
-            goto cleanup;
-        }
         ctxs[i].name = names[i];
         pthread_mutex_init(&ctxs[i].lock, NULL);
         ctxs[i].lock_ready = 1;
+
+        /* Info comes from the sensor itself, so a finger can legitimately have
+         * none: no sensor fitted, sensor firmware too old to describe itself, or
+         * the hand still reading it right after power-up. Degrade that finger
+         * instead of ending the run -- the other four are still usable. */
+        WujiFingertipSensorInfo info;
+        if (read_info[i](dev, &info) != WUJI_STATUS_OK) {
+            printf("  %-6s no info (%s); skipping this finger\n",
+                   names[i], wuji_last_error());
+            ctxs[i].state = FINGER_NO_INFO;
+            continue;
+        }
         /* Remember which info revision this decoder came from; every data frame
          * carries the same value and is rejected if it drifts. */
         ctxs[i].digest = info.digest;
-        if (parse_format(info.format, &ctxs[i]) != 0) goto cleanup;
+        if (parse_format(info.format, &ctxs[i]) != 0) {
+            printf("  %-6s info format not understood; skipping this finger\n", names[i]);
+            ctxs[i].state = FINGER_NO_INFO;
+            continue;
+        }
+        ctxs[i].has_info = 1;
+        with_info++;
         if (ctxs[i].point_count > max_points) max_points = ctxs[i].point_count;
         printf("  %-6s frame_id=%s  device_type=0x%04x  rate=%.0fHz  digest=0x%08x  %d points  %s\n",
                names[i], info.header.frame_id, info.device_type, info.rate_hz, info.digest,
@@ -762,6 +799,14 @@ int main(void) {
             printf("         aggregate force acts at (%+6.2f,%+6.2f,%+6.2f)mm\n",
                    ctxs[i].force_point[0] * 1000, ctxs[i].force_point[1] * 1000,
                    ctxs[i].force_point[2] * 1000);
+    }
+
+    if (with_info == 0) {
+        fprintf(stderr,
+                "no fingertip reported its info; nothing to decode. Update the "
+                "fingertip sensor firmware, or retry once the hand has finished "
+                "reading the sensors after power-up.\n");
+        goto cleanup;
     }
 
     /* Subscribe to the five per-finger typed data streams. */
