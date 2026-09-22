@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import signal
 import struct
 import sys
@@ -17,6 +18,8 @@ HEADER = struct.Struct("<8sHBBI")
 FRAME = struct.Struct("<I20f")
 SIDE_TO_ID = {"right": 1, "left": 2}
 REPLAY_INTERVAL_S = 0.001
+RAMP_DURATION_S = 1.0
+CAPTURE_TIMEOUT_S = 2.0
 _STOP_REQUESTED = False
 
 
@@ -61,6 +64,75 @@ def _read_qpos(stream):
     return values[1:]
 
 
+def _ramp_frames(start, target, steps):
+    """Blend from start to target with a cosine ease-in-out profile."""
+    frames = []
+    for step in range(1, steps + 1):
+        ratio = 0.5 * (1.0 - math.cos(math.pi * step / steps))
+        frames.append(
+            tuple(current + (goal - current) * ratio
+                  for current, goal in zip(start, target))
+        )
+    return tuple(frames)
+
+
+def _positions_in_joint_order(entries, nid_to_joint_index=None):
+    """Scatter one frame into flat-20 order via WujiHand2.nid_to_joint_index.
+
+    Returns None unless the frame carries exactly the 20 joint nids — a
+    tactile-slot or out-of-range nid rejects the frame instead of being
+    silently misplaced.
+
+    `nid_to_joint_index` is a test hook: the default None resolves to the
+    real `WujiHand2.nid_to_joint_index`, and any injected callable must raise
+    WujiException for a non-joint nid (which rejects the frame).
+    """
+    import wuji_sdk
+
+    if nid_to_joint_index is None:
+        nid_to_joint_index = wuji_sdk.WujiHand2.nid_to_joint_index
+    positions = [None] * JOINT_COUNT
+    for entry in entries:
+        try:
+            index = nid_to_joint_index(entry.nid)
+        except wuji_sdk.WujiException:
+            return None
+        if positions[index] is not None:
+            return None
+        positions[index] = float(entry.position)
+    if any(position is None for position in positions):
+        return None
+    return tuple(positions)
+
+
+def _capture_start_positions(hand, *, timeout=CAPTURE_TIMEOUT_S,
+                             sleep=time.sleep, monotonic=time.monotonic,
+                             nid_to_joint_index=None):
+    """Drain joint_states to the newest frame; return flat-20 positions."""
+    subscription = hand.joint_states().subscribe()
+    try:
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            if _STOP_REQUESTED:
+                raise InterruptedError("operator stop requested")
+            frame = None
+            while True:  # keep only the newest queued frame
+                newer = subscription.recv()
+                if newer is None:
+                    break
+                frame = newer
+            if frame is not None and len(frame.joints) == JOINT_COUNT:
+                positions = _positions_in_joint_order(
+                    frame.joints, nid_to_joint_index
+                )
+                if positions is not None:
+                    return positions
+            sleep(0.005)
+    finally:
+        subscription.close()
+    raise RuntimeError("no complete joint_states frame within capture timeout")
+
+
 def _play_replay(
     stream,
     frame_count,
@@ -68,8 +140,21 @@ def _play_replay(
     *,
     sleep=time.sleep,
     stop_requested=lambda: False,
+    ramp_start=None,
 ):
-    """Stream every qpos once with a fixed 1 ms interval."""
+    """Stream every qpos once with a fixed 1 ms interval.
+
+    With ramp_start, first ease from that pose to the opening frame.
+    """
+    if ramp_start is not None and frame_count > 0:
+        first_qpos = _read_qpos(stream)
+        stream.seek(HEADER.size)
+        ramp_steps = round(RAMP_DURATION_S / REPLAY_INTERVAL_S)
+        for qpos in _ramp_frames(ramp_start, first_qpos, ramp_steps):
+            if stop_requested():
+                raise InterruptedError("operator stop requested")
+            send(qpos)
+            sleep(REPLAY_INTERVAL_S)
     for frame_index in range(frame_count):
         if stop_requested():
             raise InterruptedError("operator stop requested")
@@ -105,10 +190,7 @@ def _run_device(*, data_dir=None):
         replay_stream, frame_count = _open_replay(
             _side_for_hand(hand), data_dir=data_dir
         )
-        try:
-            hand.enable()
-        except Exception as error:
-            raise RuntimeError(f"enable failed: {error}") from error
+        hand.enable()
         publisher = hand.joint_command().publish()
 
         def send(qpos):
@@ -124,6 +206,7 @@ def _run_device(*, data_dir=None):
             replay_stream,
             frame_count,
             send,
+            ramp_start=_capture_start_positions(hand),
             stop_requested=lambda: _STOP_REQUESTED,
         )
     finally:
