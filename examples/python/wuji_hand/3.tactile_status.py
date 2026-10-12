@@ -11,6 +11,8 @@ a re-plug, disconnect and reconnect the hand.
 Usage: python 3.tactile_status.py
 """
 
+from __future__ import annotations
+
 import math
 import time
 

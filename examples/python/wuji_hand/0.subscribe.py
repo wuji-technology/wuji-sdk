@@ -8,6 +8,8 @@ stream using subscribe().
 Usage: python 0.subscribe.py
 """
 
+from __future__ import annotations
+
 import time
 
 from wuji_sdk import DeviceType, HandJointStates, SdkManager, WujiHand

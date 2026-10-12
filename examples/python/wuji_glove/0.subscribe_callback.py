@@ -14,6 +14,8 @@ Usage:
   python 0.subscribe_callback.py --sn <serial_number> --hand-model-path /absolute/path/to/hand.urdf
 """
 
+from __future__ import annotations
+
 import argparse
 import time
 from functools import partial

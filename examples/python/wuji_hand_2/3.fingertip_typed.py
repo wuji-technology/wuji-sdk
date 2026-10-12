@@ -35,6 +35,9 @@ subscription queue and shows the newest frame.
 
 Usage: python 3.fingertip_typed.py
 """
+
+from __future__ import annotations
+
 import json
 import math
 import struct

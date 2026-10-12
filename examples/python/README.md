@@ -70,10 +70,13 @@ Example 7 is a standalone source file. Example 6 is a standalone bundle that
 contains `opposition.py` and Right and Left replay data. Copy the complete
 `6_opposition/` directory to use that example.
 
-Both entries accept no command-line options. They auto-connect one device,
-require all 20 joints online, enable the hand, ramp from the current pose to
-the trajectory start, and then send a fixed command sequence. Example 6
-selects and streams one replay file from device handedness.
+Both entries accept no command-line options. Each scans for Wuji Hand 2
+devices, lists the discovered serial numbers, and connects the hand you pick
+by entering its candidate number. When several hands are on the network, the
+prompt lists each numbered candidate (Enter - or a closed stdin - picks the
+first). They require all 20 joints online, enable the hand, ramp from the
+current pose to the trajectory start, and then send a fixed command sequence.
+Example 6 selects and streams one replay file from device handedness.
 
 #### Choose Example 6 or 7
 
@@ -98,7 +101,7 @@ Example 7 sends a fixed 101-command cosine sweep. Joint 0 moves from zero to
 
 #### Run Example 6
 
-Auto-connect one Hand 2 and replay the recording selected by its handedness:
+Connect one Wuji Hand 2 and replay the recording selected by its handedness:
 
 ```bash
 python examples/python/wuji_hand_2/6_opposition/opposition.py

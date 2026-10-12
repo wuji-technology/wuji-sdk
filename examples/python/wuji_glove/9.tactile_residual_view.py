@@ -24,6 +24,8 @@ Usage:
   python 9.tactile_residual_view.py --sn <serial_number> --seconds 60 --threshold 0.8
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 import threading

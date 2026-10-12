@@ -129,15 +129,29 @@ def main():
         deadline = time.monotonic() + 5.0
         diag_sub = hand.joint_diagnostics().subscribe()
         try:
+            seen, enabled = 0, 0
             while time.monotonic() < deadline:
                 time.sleep(0.2)
-                frame = diag_sub.recv()
-                if frame is None or not frame.joints:
+                # recv() hands out the oldest queued frame, so drain to the
+                # newest one before judging: at this stream rate the queue holds
+                # about a second of frames.
+                frame = None
+                while (latest := diag_sub.recv()) is not None:
+                    frame = latest
+                if frame is None:
                     continue
-                if all(e.status_word.ext_state == 2 for e in frame.joints):
+                # Variable-length stream, online joints only: a short frame says
+                # nothing about the joints it omits, and those joints ignore
+                # commands until they come up and enable.
+                seen = len(frame.joints)
+                enabled = sum(1 for e in frame.joints if e.status_word.ext_state == 2)
+                if seen == TOTAL_JOINTS and enabled == TOTAL_JOINTS:
                     break
             else:
-                print("Enable timeout — not all online motors reached Enabled.")
+                print(
+                    f"Enable timeout — last frame reported {seen} of "
+                    f"{TOTAL_JOINTS} joints, {enabled} of them Enabled."
+                )
                 sys.exit(1)
         finally:
             diag_sub.close()

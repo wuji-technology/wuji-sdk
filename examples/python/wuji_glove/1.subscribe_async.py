@@ -12,6 +12,8 @@ Usage:
   python 1.subscribe_async.py --sn <serial_number> --hand-model-path /absolute/path/to/hand.urdf
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 from pathlib import Path

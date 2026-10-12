@@ -8,6 +8,8 @@ data stream using async/await with recv_async(). Read-only — no motor enable.
 Usage: python 1.subscribe_async.py
 """
 
+from __future__ import annotations
+
 import asyncio
 
 from wuji_sdk import SdkManager, DeviceType, WujiHand2, JointStateFrame

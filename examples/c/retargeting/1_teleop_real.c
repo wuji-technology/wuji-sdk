@@ -30,6 +30,10 @@
  *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
  *          cmake --build build
  * Run:   ./build/1_teleop_real        (Ctrl+C to stop)
+ *        ./build/1_teleop_real --hand-sn <hand SN> --glove-sn <glove SN>
+ *
+ * Without --hand-sn / --glove-sn the example drives whichever hand and glove
+ * the scan reports. Pass the serial numbers when more than one is reachable.
  */
 
 #define _POSIX_C_SOURCE 199309L
@@ -52,6 +56,7 @@
 #define FPS           120     /* target loop rate; slow frames lower rate, never burst */
 #define NUM_JOINTS    20      /* joint command array length, firmware order */
 #define NUM_KEYPOINTS 21      /* MediaPipe hand landmarks: wrist + 5 fingers x 4 */
+#define RAMP_SEC      1.0     /* startup ease from the hand's pose to the glove pose */
 
 /* ============================================================================
  * SIGINT handling
@@ -112,6 +117,84 @@ static void on_hand_skeleton(WujiFrameKind kind,
 }
 
 /* ============================================================================
+ * Startup buffers: the hand's own joint states and enable status
+ *
+ * Same drain-latest-frame shape as skeleton_buf_t, used only during startup.
+ * ========================================================================== */
+
+/* Both streams carry online joints only, so a short frame is refused rather than
+ * ramped from. had_frame separates "no frame" from "an empty frame" - seen_len
+ * leaves both at 0. */
+
+typedef struct {
+    pthread_mutex_t mu;
+    float pos[NUM_JOINTS];
+    int   have_frame;
+    int   had_frame;
+    size_t seen_len;
+} joint_state_buf_t;
+
+static void on_joint_state(WujiFrameKind kind,
+                           const struct WujiJointStateFrame *frame,
+                           void *user_data)
+{
+    joint_state_buf_t *buf = (joint_state_buf_t *)user_data;
+    const int ok  = (kind == WUJI_FRAME_KIND_OK && frame);
+    const size_t len = ok ? frame->joints_len : 0;
+
+    pthread_mutex_lock(&buf->mu);
+    /* Degraded frames rewrite have_frame too: returning early would leave a pose
+     * the hand has already left standing as valid for the ramp to start from. */
+    buf->have_frame = (len == NUM_JOINTS);
+    if (buf->have_frame) {
+        for (size_t i = 0; i < NUM_JOINTS; i++)
+            buf->pos[i] = frame->joints[i].position;
+    }
+    if (ok) {
+        buf->had_frame = 1;
+        buf->seen_len = len;
+    }
+    pthread_mutex_unlock(&buf->mu);
+}
+
+typedef struct {
+    pthread_mutex_t mu;
+    int all_enabled;
+    int had_frame;
+    size_t seen_len;
+} enable_buf_t;
+
+static void on_joint_diagnostics(WujiFrameKind kind,
+                                 const struct WujiJointDiagnosticsFrame *frame,
+                                 void *user_data)
+{
+    enable_buf_t *buf = (enable_buf_t *)user_data;
+    const int ok  = (kind == WUJI_FRAME_KIND_OK && frame);
+    const size_t len = ok ? frame->joints_len : 0;
+
+    /* All-Enabled on a short frame would start the ramp while the missing joints
+     * are still coming up, and they would take the step the ramp exists to avoid.
+     * Empty and error frames clear the flag for the same reason. */
+    int all = (len == NUM_JOINTS);
+    for (size_t i = 0; all && i < len; i++) {
+        struct WujiJointStatus status;
+        if (wuji_hand_2_decode_joint_status(frame->joints[i].status_word, &status)
+                != WUJI_STATUS_OK
+            || !status.enabled) {
+            all = 0;
+        }
+    }
+
+    pthread_mutex_lock(&buf->mu);
+    buf->all_enabled = all;
+    if (ok) {
+        buf->had_frame = 1;
+        buf->seen_len = len;
+    }
+    pthread_mutex_unlock(&buf->mu);
+}
+
+/* ============================================================================
  * Monotonic clock helpers
  * ========================================================================== */
 
@@ -126,6 +209,176 @@ static void sleep_ns(int64_t ns) {
     struct timespec req = { .tv_sec = ns / 1000000000LL,
                             .tv_nsec = ns % 1000000000LL };
     nanosleep(&req, NULL);
+}
+
+/* ============================================================================
+ * Startup ramp (Wuji Hand 2 only)
+ *
+ * The first retargeted frame is otherwise a step input, and a Wuji Hand 2 has
+ * no smoothing channel of its own, so the example ramps in software.
+ * ========================================================================== */
+
+/* Block until every online joint reports Enabled. Ramping into motors that are
+ * not holding position yet would land the whole ramp at once when they engage. */
+static int wait_enabled(struct WujiDevice *dev)
+{
+    enable_buf_t buf;
+    memset(&buf, 0, sizeof(buf));
+    pthread_mutex_init(&buf.mu, NULL);
+
+    struct WujiSub *sub = NULL;
+    if (wuji_hand_2_subscribe_joint_diagnostics(dev, on_joint_diagnostics, &buf, &sub)
+            != WUJI_STATUS_OK) {
+        fprintf(stderr, "subscribe_joint_diagnostics: %s\n", wuji_last_error());
+        pthread_mutex_destroy(&buf.mu);
+        return 1;
+    }
+
+    int ok = 0;
+    int had = 0;
+    size_t seen = 0;
+    const int64_t deadline = now_ns() + 5000000000LL;
+    while (!g_stop && !ok && now_ns() < deadline) {
+        sleep_ns(50000000LL);
+        pthread_mutex_lock(&buf.mu);
+        ok = buf.all_enabled;
+        had = buf.had_frame;
+        seen = buf.seen_len;
+        pthread_mutex_unlock(&buf.mu);
+    }
+
+    wuji_sub_close(sub);
+    pthread_mutex_destroy(&buf.mu);
+    if (!ok && !g_stop) {
+        if (had)
+            fprintf(stderr,
+                    "Enable timeout - the last diagnostics frame reported %zu of %d "
+                    "joints with not all of them Enabled\n", seen, NUM_JOINTS);
+        else
+            fprintf(stderr,
+                    "Enable timeout - no joint_diagnostics frame arrived - "
+                    "is the hand publishing?\n");
+        return 1;
+    }
+    return 0;
+}
+
+/* Read where the hand actually is, so the ramp has somewhere to start from. */
+static int read_current_pose(struct WujiDevice *dev, float out[NUM_JOINTS])
+{
+    joint_state_buf_t buf;
+    memset(&buf, 0, sizeof(buf));
+    pthread_mutex_init(&buf.mu, NULL);
+
+    struct WujiSub *sub = NULL;
+    if (wuji_hand_2_subscribe_joint_states(dev, on_joint_state, &buf, &sub)
+            != WUJI_STATUS_OK) {
+        fprintf(stderr, "subscribe_joint_states: %s\n", wuji_last_error());
+        pthread_mutex_destroy(&buf.mu);
+        return 1;
+    }
+
+    int got = 0;
+    int had = 0;
+    size_t seen = 0;
+    const int64_t deadline = now_ns() + 3000000000LL;
+    while (!g_stop && !got && now_ns() < deadline) {
+        pthread_mutex_lock(&buf.mu);
+        had = buf.had_frame;
+        seen = buf.seen_len;
+        if (buf.have_frame) {
+            memcpy(out, buf.pos, NUM_JOINTS * sizeof(float));
+            got = 1;
+        }
+        pthread_mutex_unlock(&buf.mu);
+        if (!got) sleep_ns(2000000LL);
+    }
+
+    wuji_sub_close(sub);
+    pthread_mutex_destroy(&buf.mu);
+    if (!got && !g_stop) {
+        if (had)
+            fprintf(stderr,
+                    "joint_states reports %zu online joints, expected %d - "
+                    "every joint must be online to ramp\n", seen, NUM_JOINTS);
+        else
+            fprintf(stderr,
+                    "Timed out waiting for joint_states - no frame arrived - "
+                    "is the hand publishing?\n");
+        return 1;
+    }
+    return 0;
+}
+
+/* Ease from `start` to the glove pose over RAMP_SEC, leaving the keypoints it
+ * finished on in `out_last_kp`. The endpoint is re-retargeted every frame: the
+ * operator keeps moving, so a frozen target would end the ramp with a step. */
+static int ramp_to_glove(struct WujiJointCommandPublisher *pub,
+                         struct WujiRetargetSession *session,
+                         skeleton_buf_t *skel,
+                         const float start[NUM_JOINTS],
+                         float out_last_kp[NUM_KEYPOINTS * 3])
+{
+    const int64_t budget_ns = (int64_t)(1000000000LL / FPS);
+    float kp[NUM_KEYPOINTS * 3];
+    int   have_kp = 0;
+
+    /* Nothing to ramp toward until the glove has published once. */
+    const int64_t kp_deadline = now_ns() + 5000000000LL;
+    while (!g_stop && !have_kp && now_ns() < kp_deadline) {
+        pthread_mutex_lock(&skel->mu);
+        if (skel->have_frame) {
+            memcpy(kp, skel->kp, sizeof(kp));
+            skel->have_frame = 0;
+            have_kp = 1;
+        }
+        pthread_mutex_unlock(&skel->mu);
+        if (!have_kp) sleep_ns(budget_ns);
+    }
+    if (!have_kp) {
+        if (!g_stop)
+            fprintf(stderr, "Timed out waiting for the glove's first hand_skeleton frame\n");
+        return g_stop ? 0 : 1;
+    }
+
+    int steps = (int)(FPS * RAMP_SEC);
+    if (steps < 1) steps = 1;
+
+    float qpos[NUM_JOINTS];
+    WujiJointCommand cmds[NUM_JOINTS];
+
+    for (int i = 1; i <= steps && !g_stop; i++) {
+        const int64_t step_start = now_ns();
+        pthread_mutex_lock(&skel->mu);
+        if (skel->have_frame) {
+            memcpy(kp, skel->kp, sizeof(kp));
+            skel->have_frame = 0;
+        }
+        pthread_mutex_unlock(&skel->mu);
+
+        if (wuji_retarget_session_step(session, kp, qpos) != WUJI_STATUS_OK) {
+            fprintf(stderr, "retarget_session_step (ramp): %s\n", wuji_last_error());
+            return 1;
+        }
+
+        const float alpha = (float)i / (float)steps;
+        for (int j = 0; j < NUM_JOINTS; j++) {
+            cmds[j].position = start[j] + alpha * (qpos[j] - start[j]);
+            cmds[j].velocity = 0.0f;
+            cmds[j].effort   = 0.0f;
+        }
+        if (wuji_joint_command_publisher_send(pub, cmds) != WUJI_STATUS_OK) {
+            fprintf(stderr, "publisher_send (ramp): %s\n", wuji_last_error());
+            return 1;
+        }
+        /* Paced on this step's own start, same as the main loop: a slow step
+         * lowers the rate instead of being repaid by a burst (see FPS above). */
+        int64_t elapsed = now_ns() - step_start;
+        sleep_ns(budget_ns - elapsed);
+    }
+
+    memcpy(out_last_kp, kp, NUM_KEYPOINTS * 3 * sizeof(float));
+    return 0;
 }
 
 /* ============================================================================
@@ -171,11 +424,52 @@ static int configure_wuji_hand(struct WujiDevice *dev)
     return 0;
 }
 
+/* Pick one hand and one glove out of a scan result. A serial number, when given,
+ * restricts the search to that device; without one the pick is unchanged:
+ * WujiHand2 preferred over gen1, the last matching hand, the first glove.
+ * An index comes back as n_dev when nothing matched. */
+static void select_devices(const WujiDiscovered *list, size_t n_dev,
+                           const char *hand_sn, const char *glove_sn,
+                           size_t *out_hand_idx, size_t *out_glove_idx,
+                           WujiDeviceType *out_hand_type)
+{
+    size_t hand_idx  = n_dev;
+    size_t glove_idx = n_dev;
+    WujiDeviceType hand_type = WUJI_DEVICE_TYPE_UNKNOWN;
+
+    for (size_t i = 0; i < n_dev; i++) {
+        bool hand_match  = hand_sn == NULL ||
+                           strcmp(list[i].serial_number, hand_sn) == 0;
+        bool glove_match = glove_sn == NULL ||
+                           strcmp(list[i].serial_number, glove_sn) == 0;
+
+        /* WujiHand2 preferred: overwrite a gen1 hand entry when we see a
+         * WujiHand2, but never overwrite a WujiHand2 entry with gen1. */
+        if (hand_match && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
+            hand_idx  = i;
+            hand_type = list[i].device_id;
+        } else if (hand_match && list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND &&
+                   hand_type != WUJI_DEVICE_TYPE_WUJI_HAND_2) {
+            hand_idx  = i;
+            hand_type = list[i].device_id;
+        }
+
+        if (glove_match && glove_idx == n_dev &&
+            list[i].device_id == WUJI_DEVICE_TYPE_WUJI_GLOVE) {
+            glove_idx = i;
+        }
+    }
+
+    *out_hand_idx  = hand_idx;
+    *out_glove_idx = glove_idx;
+    *out_hand_type = hand_type;
+}
+
 /* ============================================================================
  * Main scan + teleop routine
  * ========================================================================== */
 
-static int run_teleop(void)
+static int run_teleop(const char *hand_sn, const char *glove_sn)
 {
     int ret = 0;
 
@@ -193,36 +487,28 @@ static int run_teleop(void)
     }
 
     printf("Scan results:\n");
-    size_t hand_idx  = n_dev;
-    size_t glove_idx = n_dev;
-    WujiDeviceType hand_type = WUJI_DEVICE_TYPE_UNKNOWN;
-
     for (size_t i = 0; i < n_dev; i++) {
         printf("  SN=%s  Type=%s  Address=%s\n",
                list[i].serial_number, list[i].model, list[i].address);
-
-        /* WujiHand2 preferred: overwrite a gen1 hand entry when we see a
-         * WujiHand2, but never overwrite a WujiHand2 entry with gen1. */
-        if (list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
-            hand_idx  = i;
-            hand_type = list[i].device_id;
-        } else if (list[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND &&
-                   hand_type != WUJI_DEVICE_TYPE_WUJI_HAND_2) {
-            hand_idx  = i;
-            hand_type = list[i].device_id;
-        }
-
-        if (glove_idx == n_dev &&
-            list[i].device_id == WUJI_DEVICE_TYPE_WUJI_GLOVE) {
-            glove_idx = i;
-        }
     }
 
+    size_t hand_idx  = n_dev;
+    size_t glove_idx = n_dev;
+    WujiDeviceType hand_type = WUJI_DEVICE_TYPE_UNKNOWN;
+    select_devices(list, n_dev, hand_sn, glove_sn, &hand_idx, &glove_idx, &hand_type);
+
     if (hand_idx == n_dev || glove_idx == n_dev) {
-        if (hand_idx == n_dev)
-            printf("No Wuji Hand / Wuji Hand 2 found\n");
-        else
-            printf("No Wuji Glove found\n");
+        if (hand_idx == n_dev) {
+            if (hand_sn)
+                printf("No Wuji Hand / Wuji Hand 2 found with SN %s\n", hand_sn);
+            else
+                printf("No Wuji Hand / Wuji Hand 2 found\n");
+        } else {
+            if (glove_sn)
+                printf("No Wuji Glove found with SN %s\n", glove_sn);
+            else
+                printf("No Wuji Glove found\n");
+        }
         wuji_discovered_free(list, n_dev);
         return 1;
     }
@@ -346,15 +632,35 @@ static int run_teleop(void)
         goto cleanup_channel;
     }
 
+    float last_kp[NUM_KEYPOINTS * 3];
+    int   have_last_kp = 0;
+
+    /* ------------------------------------------------------------------
+     * 6b. Wuji Hand 2 only: ease from the hand's current pose into the
+     *     glove pose before the loop starts. See ramp_to_glove.
+     * ------------------------------------------------------------------ */
+    if (is_hand2 && !g_stop) {
+        float start_pose[NUM_JOINTS];
+        printf("Easing into the glove pose over %.1fs...\n", (double)RAMP_SEC);
+        if (wait_enabled(hand_dev) != 0 ||
+            read_current_pose(hand_dev, start_pose) != 0 ||
+            ramp_to_glove(pub2, session, &skel_buf, start_pose, last_kp) != 0) {
+            wuji_sub_close(skel_sub);
+            pthread_mutex_destroy(&skel_buf.mu);
+            wuji_retarget_session_free(session);
+            ret = 1;
+            goto cleanup_channel;
+        }
+        have_last_kp = 1;
+    }
+
     /* ------------------------------------------------------------------
      * 7. 120 FPS main loop: read -> retarget -> send.
      * ------------------------------------------------------------------ */
     printf("Teleoperating (Ctrl+C to stop)...\n");
 
     const int64_t budget_ns = (int64_t)(1000000000LL / FPS);
-    float last_kp[NUM_KEYPOINTS * 3];
     float qpos[NUM_JOINTS];
-    int   have_last_kp = 0;
 
     while (!g_stop) {
         int64_t frame_start = now_ns();
@@ -575,8 +881,63 @@ static WujiStatus select_sdk_user(char *out_prev_user_id, size_t cap)
  * Entry point: user management + teleop
  * ========================================================================== */
 
-int main(void)
+/* ============================================================================
+ * Command line
+ * ========================================================================== */
+
+typedef struct {
+    const char *hand_sn;
+    const char *glove_sn;
+} TeleopArgs;
+
+static void print_usage(FILE *out, const char *prog)
 {
+    fprintf(out,
+            "Usage: %s [--hand-sn SN] [--glove-sn SN]\n"
+            "  --hand-sn SN   Serial number of the hand to drive.\n"
+            "  --glove-sn SN  Serial number of the glove to read.\n"
+            "Without a serial number the example drives whichever hand and glove\n"
+            "the scan reports, which is an arbitrary one when several are\n"
+            "reachable. Pass the serial numbers whenever that is the case.\n",
+            prog);
+}
+
+/* Returns 0 to continue, 1 when --help was handled, -1 on a bad argument. */
+static int parse_args(int argc, char **argv, TeleopArgs *args)
+{
+    *args = (TeleopArgs){0};
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        const char **slot = NULL;
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            print_usage(stdout, argv[0]);
+            return 1;
+        } else if (strcmp(arg, "--hand-sn") == 0) {
+            slot = &args->hand_sn;
+        } else if (strcmp(arg, "--glove-sn") == 0) {
+            slot = &args->glove_sn;
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", arg);
+            print_usage(stderr, argv[0]);
+            return -1;
+        }
+        if (++i >= argc) {
+            fprintf(stderr, "Missing value for %s\n", arg);
+            print_usage(stderr, argv[0]);
+            return -1;
+        }
+        *slot = argv[i];
+    }
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    TeleopArgs args;
+    int parse_st = parse_args(argc, argv, &args);
+    if (parse_st != 0)
+        return parse_st > 0 ? 0 : 2;
+
     /* sa_flags = 0 (no SA_RESTART) so SIGINT interrupts the blocking fgets() in
      * the user prompt with EINTR instead of restarting it. signal() gives no
      * such guarantee: glibc takes its semantics from the feature-test macros,
@@ -612,7 +973,7 @@ int main(void)
         return select_st == WUJI_STATUS_ERR_CANCELLED ? 130 : 1;
     }
 
-    int exit_code = run_teleop();
+    int exit_code = run_teleop(args.hand_sn, args.glove_sn);
 
     /* Restore the previously selected SDK user on exit. The default user's id is
      * the empty string, so that case goes through wuji_switch_to_default_user

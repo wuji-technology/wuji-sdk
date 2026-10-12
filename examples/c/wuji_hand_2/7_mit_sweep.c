@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -42,24 +43,125 @@ static int sleep_ns(long interval_ns) {
     return 0;
 }
 
-/* Scan and connect the only discovered device. */
-static struct WujiDevice *connect_hand(void) {
+/* Scan, keep only Wuji Hand 2 devices, and connect the one the operator
+ * selects. Every eligible serial number is listed; when several hands are on
+ * the network, the operator picks one by number. Enter - or a closed stdin,
+ * as in a piped run - selects the first. Returns 0 on success, -1 on failure
+ * (a diagnostic is printed), and -2 when the operator stops at the prompt. */
+static int connect_hand(struct WujiDevice **out_hand) {
     struct WujiDiscovered *devices = NULL;
     struct WujiConnectTarget target = {0};
     struct WujiDevice *hand = NULL;
     size_t count = 0u;
+    size_t hands = 0u;
+    size_t choice = 0u;
+    size_t candidate = 0u;
+    size_t i;
+    WujiStatus status;
 
-    if (wuji_scan(&devices, &count) != WUJI_STATUS_OK) return NULL;
-    if (count == 1u) {
-        target.kind = WUJI_CONNECT_TARGET_KIND_SN;
-        target.value = devices[0].serial_number;
-        if (wuji_connect(&target, "hand_2_mit_sweep", NULL, &hand)
-            != WUJI_STATUS_OK) {
-            hand = NULL;
+    status = wuji_scan(&devices, &count);
+    if (status != WUJI_STATUS_OK) {
+        fprintf(stderr, "error: scan failed: %s\n", wuji_last_error());
+        wuji_discovered_free(devices, count);
+        return -1;
+    }
+    if (count == 0u) {
+        fprintf(stderr,
+                "error: no device found; check that the device is powered on "
+                "and reachable on the network\n");
+        wuji_discovered_free(devices, count);
+        return -1;
+    }
+    printf("Found %zu device(s)\n", count);
+    for (i = 0u; i < count; ++i) {
+        printf("  SN=%s  Type=%s  Address=%s\n", devices[i].serial_number,
+               devices[i].model, devices[i].address);
+        if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) ++hands;
+    }
+    if (hands == 0u) {
+        fprintf(stderr,
+                "error: no Wuji Hand 2 found among the scanned devices\n");
+        wuji_discovered_free(devices, count);
+        return -1;
+    }
+    if (hands > 1u) {
+        candidate = 0u;
+        printf("Wuji Hand 2 devices:\n");
+        for (i = 0u; i < count; ++i) {
+            if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
+                printf("  [%zu] SN=%s  Address=%s\n", candidate,
+                       devices[i].serial_number, devices[i].address);
+                ++candidate;
+            }
+        }
+        for (;;) {
+            printf("Select Wuji Hand 2 to connect [0-%zu], Enter picks 0: ",
+                   hands - 1u);
+            fflush(stdout);
+
+            char line[128];
+            if (!fgets(line, sizeof(line), stdin)) {
+                if (g_stop) {
+                    printf("\n");
+                    wuji_discovered_free(devices, count);
+                    return -2;
+                }
+                printf("\nNo terminal input available - connecting the first "
+                       "Wuji Hand 2.\n");
+                break;
+            }
+            if (g_stop) {
+                printf("\n");
+                wuji_discovered_free(devices, count);
+                return -2;
+            }
+            char *s = line;
+            while (*s == ' ' || *s == '\t') s++;
+            char *end = s + strlen(s);
+            while (end > s && (end[-1] == '\n' || end[-1] == '\r' ||
+                               end[-1] == ' ' || end[-1] == '\t'))
+                *--end = '\0';
+            if (*s == '\0') break; /* Enter selects the first candidate */
+
+            char *stop = NULL;
+            long value = strtol(s, &stop, 10);
+            /* strtol also parses negatives, which would index past the end. */
+            if (*stop != '\0' || value < 0 || (size_t)value >= hands) {
+                printf("Invalid selection: '%s'\n", s);
+                continue;
+            }
+            choice = (size_t)value;
+            break;
         }
     }
+    if (g_stop) {
+        wuji_discovered_free(devices, count);
+        return -2;
+    }
+    /* Map the chosen candidate ordinal back into devices[] order. */
+    candidate = 0u;
+    for (i = 0u; i < count; ++i) {
+        if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
+            if (candidate == choice) break;
+            ++candidate;
+        }
+    }
+    if (i == count) { /* unreachable: hands > 0 and choice < hands */
+        wuji_discovered_free(devices, count);
+        return -1;
+    }
+    target.kind = WUJI_CONNECT_TARGET_KIND_SN;
+    target.value = devices[i].serial_number;
+    printf("Connecting Wuji Hand 2: SN=%s  Address=%s\n",
+           devices[i].serial_number, devices[i].address);
+    status = wuji_connect(&target, "hand_2_mit_sweep", NULL, &hand);
     wuji_discovered_free(devices, count);
-    return hand;
+    if (status != WUJI_STATUS_OK) {
+        fprintf(stderr, "error: connect failed: %s\n", wuji_last_error());
+        return -1;
+    }
+    *out_hand = hand;
+    return 0;
 }
 
 /* Build one command in the fixed joint-0 cosine sequence. */
@@ -220,6 +322,7 @@ static int run_device(void) {
     int cleanup_failed = 0;
     int exit_code = 1;
     int send_result;
+    int select_result;
     float start[JOINT_COUNT];
 
     if (wuji_init(&init_options) != WUJI_STATUS_OK) {
@@ -227,11 +330,12 @@ static int run_device(void) {
         goto cleanup;
     }
     initialized = 1;
-    hand = connect_hand();
-    if (hand == NULL) {
-        fprintf(stderr, "error: expected exactly one device\n");
+    select_result = connect_hand(&hand);
+    if (select_result == -2) {
+        exit_code = 130;
         goto cleanup;
     }
+    if (select_result != 0) goto cleanup;
     if (wuji_hand_2_online_joints_count(hand, &online) != WUJI_STATUS_OK
         || online != JOINT_COUNT) {
         fprintf(stderr, "error: Hand 2 requires 20/20 online joints\n");
@@ -294,7 +398,20 @@ cleanup:
 
 /* Run the fixed physical-device transaction. */
 int main(void) {
+    /* sa_flags = 0 (no SA_RESTART) so SIGINT interrupts the blocking fgets()
+     * in the device prompt with EINTR instead of restarting it. signal()
+     * gives no such guarantee: glibc takes its semantics from the
+     * feature-test macros, and musl and bionic always set SA_RESTART. */
+    struct sigaction sigint_action;
+
     g_stop = 0;
-    signal(SIGINT, on_sigint);
+    memset(&sigint_action, 0, sizeof(sigint_action));
+    sigint_action.sa_handler = on_sigint;
+    sigemptyset(&sigint_action.sa_mask);
+    sigint_action.sa_flags = 0;
+    if (sigaction(SIGINT, &sigint_action, NULL) != 0) {
+        fprintf(stderr, "error: sigaction(SIGINT) failed\n");
+        return 1;
+    }
     return run_device();
 }

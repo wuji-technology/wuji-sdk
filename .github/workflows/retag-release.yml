@@ -1,0 +1,50 @@
+name: Retag release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  retag:
+    name: Move release tag to merge commit
+    if: >-
+      github.event.pull_request.merged &&
+      startsWith(github.head_ref, 'release/sync-') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point tag at the merge commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          VERSION="${HEAD_REF#release/sync-}"
+
+          if ! gh api "repos/${REPO}/git/ref/tags/${VERSION}" --silent 2>"${RUNNER_TEMP}/ref.err"; then
+            if grep -q 'HTTP 404' "${RUNNER_TEMP}/ref.err"; then
+              echo "::notice::Tag ${VERSION} does not exist, nothing to move"
+              exit 0
+            fi
+            cat "${RUNNER_TEMP}/ref.err" >&2
+            exit 1
+          fi
+          CURRENT_SHA=$(gh api "repos/${REPO}/commits/${VERSION}" --jq '.sha')
+          if [ "${CURRENT_SHA}" = "${MERGE_SHA}" ]; then
+            echo "Tag ${VERSION} already points at ${MERGE_SHA}"
+            exit 0
+          fi
+
+          TAG_SHA=$(gh api "repos/${REPO}/git/tags" \
+            -f tag="${VERSION}" -f message="Release ${VERSION}" \
+            -f object="${MERGE_SHA}" -f type="commit" \
+            --jq '.sha')
+          gh api -X PATCH "repos/${REPO}/git/refs/tags/${VERSION}" \
+            -f sha="${TAG_SHA}" -F force=true >/dev/null
+          echo "Moved tag ${VERSION}: ${CURRENT_SHA} -> ${MERGE_SHA}"

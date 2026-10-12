@@ -14,6 +14,8 @@ Usage:
   python 5.calibration.py --mode api --sn <serial_number>
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json

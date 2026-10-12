@@ -16,11 +16,13 @@ The C SDK ships as a prebuilt tarball attached to each [public Release](https://
 
 ## Supported platforms
 
-| Target | Runs on | Built with |
-|--------|---------|------------|
-| `x86_64-linux-gnu` | Linux x86_64, glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, RHEL 9+) | ubuntu-22.04, glibc baseline ≤ 2.35 |
-| `aarch64-linux-gnu` | Linux ARM64, glibc ≥ 2.35 | ubuntu-22.04-arm (native), glibc baseline ≤ 2.35 |
-| `aarch64-android` | Android 10+ (API level ≥ 29), ABI `arm64-v8a`, 16 KB page support | Android NDK r27c, API 29 (pure bionic) |
+| Target | Runs on |
+|--------|---------|
+| `x86_64-linux-gnu` | Linux x86_64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
+| `aarch64-linux-gnu` | Linux ARM64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
+| `aarch64-android` | Android 10+ (API level ≥ 29), ABI `arm64-v8a` |
+
+Android artifacts link against bionic and support 16 KB pages.
 
 The SDK version itself is in the tarball filename (`wuji-sdk-c-<VER>-<target>.tar.gz`) and the Release tag.
 
@@ -79,8 +81,11 @@ Example 7 is a standalone source file. Example 6 is a standalone bundle that
 contains `opposition.c`, its own CMake project, and Right and Left replay data.
 Copy the complete `6_opposition/` directory to use that example.
 
-Each entry accepts no command-line options. Examples 6 and 7 connect the only
-discovered device, require all 20 joints online, enable the hand, ramp from the
+Each entry accepts no command-line options. Examples 6 and 7 scan for Wuji
+Hand 2 devices, list the discovered serial numbers, and connect the hand you
+pick by entering its candidate number. When several hands are on the network,
+the prompt lists each numbered candidate (Enter - or a closed stdin - picks the
+first). They require all 20 joints online, enable the hand, ramp from the
 current pose to the trajectory start, and then send a fixed command sequence.
 Example 6 selects and streams one replay file from device handedness.
 
@@ -136,7 +141,7 @@ Example 7 sends a fixed 101-command cosine sweep. Joint 0 moves from zero to
 
 #### Run Example 6
 
-Auto-connect one Hand 2 and replay the recording selected by its handedness:
+Connect one Wuji Hand 2 and replay the recording selected by its handedness:
 
 ```bash
 ./build/hand2/6_opposition/6_opposition

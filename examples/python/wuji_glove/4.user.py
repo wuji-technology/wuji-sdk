@@ -13,6 +13,8 @@ Usage:
   python 4.user.py --default-user
 """
 
+from __future__ import annotations
+
 import argparse
 from typing import Any, Optional
 
