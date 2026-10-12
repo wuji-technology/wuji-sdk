@@ -2,8 +2,9 @@
  * Wuji SDK C — Wuji Hand 2: MIT sweep (control).
  *
  * Auto-detect a Wuji Hand 2, configure MIT impedance control (effort limit +
- * per-joint kp/kd), enable motors, wait for them to report Enabled, then sweep
- * all *online* joints around zero through a fixed frequency table. Each joint
+ * per-joint kp/kd), enable motors, wait until one diagnostics frame reports
+ * all 20 joints Enabled, then sweep them around zero through a fixed frequency
+ * table. Each joint
  * follows pos = A·sin(ωt) with velocity feedforward A·ω·cos(ωt), ramped in over
  * the first quarter of each segment, returning to zero between segments.
  *
@@ -66,18 +67,25 @@ static uint64_t now_us(void) {
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
 
-/* Enable-wait state, written by the joint_diagnostics worker thread. The
- * realtime diagnostics frame carries only the online joints, each with a
- * status_word; once every joint in a frame reports Enabled we are good to go. */
-typedef struct { _Atomic int all_enabled; } enable_ctx_t;
+/* The diagnostics frame lists online joints only, so a short frame says
+ * nothing about the joints it omits: require all TOTAL_JOINTS. */
+typedef struct {
+    _Atomic int all_enabled;
+    _Atomic int last_seen;     /* joints in the latest frame, for the timeout */
+    _Atomic int last_enabled;
+} enable_ctx_t;
 
 static void on_diag(WujiFrameKind kind, const WujiJointDiagnosticsFrame *f, void *ud) {
     enable_ctx_t *c = (enable_ctx_t *)ud;
-    if (kind != WUJI_FRAME_KIND_OK || !f || f->joints_len == 0) return;
-    int all = 1;
+    if (kind != WUJI_FRAME_KIND_OK || !f) return;
+    int enabled = 0;
     for (size_t i = 0; i < f->joints_len; i++)
-        if (EXT_STATE(f->joints[i].status_word) != EXT_STATE_ENABLED) all = 0;
-    if (all) atomic_store_explicit(&c->all_enabled, 1, memory_order_relaxed);
+        if (EXT_STATE(f->joints[i].status_word) == EXT_STATE_ENABLED) enabled++;
+    atomic_store_explicit(&c->last_seen, (int)f->joints_len, memory_order_relaxed);
+    atomic_store_explicit(&c->last_enabled, enabled, memory_order_relaxed);
+    atomic_store_explicit(&c->all_enabled,
+                          f->joints_len == (size_t)TOTAL_JOINTS && enabled == TOTAL_JOINTS,
+                          memory_order_relaxed);
 }
 
 /* Fail-fast for the control setup calls: on any non-OK status print the SDK
@@ -164,8 +172,8 @@ int main(void) {
 
     /* ---- action: MIT sweep ---- */
 
-    /* Wait for all online joints to reach Enabled. We subscribe to
-     * joint_diagnostics and watch for an all-enabled frame. */
+    /* Wait until one diagnostics frame reports all 20 joints Enabled. We
+     * subscribe to joint_diagnostics and watch for such a frame. */
     enable_ctx_t en = { 0 };
     struct WujiSub *diag_sub = NULL;
     if (wuji_hand_2_subscribe_joint_diagnostics(dev, on_diag, &en, &diag_sub) != WUJI_STATUS_OK) {
@@ -179,7 +187,10 @@ int main(void) {
         usleep(50000); /* 50 ms */
     wuji_sub_close(diag_sub);
     if (!atomic_load_explicit(&en.all_enabled, memory_order_relaxed)) {
-        fprintf(stderr, "Enable timeout!\n");
+        fprintf(stderr,
+                "Enable timeout! Last frame reported %d of %d joints, %d of them Enabled.\n",
+                atomic_load_explicit(&en.last_seen, memory_order_relaxed), TOTAL_JOINTS,
+                atomic_load_explicit(&en.last_enabled, memory_order_relaxed));
         wuji_hand_2_disable(dev, NULL);
         goto cleanup;
     }

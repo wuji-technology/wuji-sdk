@@ -13,6 +13,8 @@ Usage:
   python 7.tactile_calibration.py --sn <serial_number>
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys

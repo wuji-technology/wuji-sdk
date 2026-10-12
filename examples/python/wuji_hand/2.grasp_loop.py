@@ -14,6 +14,8 @@ simple target-vs-actual readout.
 Usage: python 2.grasp_loop.py
 """
 
+from __future__ import annotations
+
 import math
 import sys
 import time

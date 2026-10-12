@@ -17,6 +17,11 @@ model selects the builtin tuning config internally, so there is no config path t
 manage. Configuring and enabling the hand's motors is the caller's responsibility,
 shown here in configure_wuji_hand_2 / configure_wuji_hand.
 
+On a Wuji Hand 2 the loop starts with a ``RAMP_SEC`` ease from the hand's current
+pose to the glove pose. Commanding the first retargeted frame directly would put
+the whole startup difference into one frame, which the motors feel as a step
+input. Keep this ramp when adapting the example.
+
 This example is set up for a **right**-hand rig (glove + hand). For a left-hand
 setup, change ``SIDE`` below — it picks the retargeter's handedness basis.
 
@@ -36,8 +41,14 @@ Install the retargeting runtime dependencies first (numpy for keypoint/qpos arra
 
 Usage:
     python 1.teleop_real.py
+    python 1.teleop_real.py --hand-sn <hand SN> --glove-sn <glove SN>
+
+Without --hand-sn / --glove-sn the example drives whichever hand and glove the
+scan reports last, which is an arbitrary one when several are reachable. Pass
+the serial numbers whenever more than one hand or glove shares the network.
 """
 
+import argparse
 import contextlib
 import time
 
@@ -57,6 +68,11 @@ from wuji_sdk import (
 FPS = 120  # target loop rate (ceiling); a slow frame lowers the rate, never bursts.
 # Handedness of the rig (glove + hand); use Handedness.Left for a left-hand setup.
 SIDE = Handedness.Right
+# Seconds spent easing from the hand's current pose to the glove pose on startup.
+RAMP_SEC = 1.0
+# Both streams carry online joints only, and joint_command().send rejects any
+# length but the full one, so the startup reads below refuse short frames.
+TOTAL_JOINTS = 20
 
 
 def configure_wuji_hand_2(hand):
@@ -121,37 +137,148 @@ def select_user(manager):
     return previous
 
 
-def read_keypoints(skeleton_sub):
-    """Read the glove's latest hand_skeleton frame as a (21, 3) float32 array.
+def drain_latest(sub):
+    """Return the newest queued frame, discarding the older ones, or None.
 
-    The glove publishes hand_skeleton faster than this loop consumes it, and
-    recv() returns the OLDEST unread frame — taking one per loop falls behind.
-    Drain every queued frame, keep only the latest. Returns None if no frame is
-    available this tick.
+    Every stream here publishes far faster than these loops poll it, and recv()
+    returns the OLDEST unread frame. Taking one frame per tick therefore walks
+    through a backlog instead of reading the present — a startup gate written
+    that way opens on a state the hand left up to a full buffer ago.
     """
     latest = None
     while True:
-        frame = skeleton_sub.recv()
+        frame = sub.recv()
         if frame is None:
-            break
+            return latest
         latest = frame
+
+
+def read_keypoints(skeleton_sub):
+    """Read the glove's latest hand_skeleton frame as a (21, 3) float32 array.
+
+    Returns None if no frame is available this tick. See drain_latest for why
+    every read here takes the newest queued frame rather than the first one.
+    """
+    latest = drain_latest(skeleton_sub)
     if latest is None:
         return None
     return np.array([j.pose.position for j in latest.joints], dtype=np.float32)
 
 
-def teleop(glove, model, send):
+def wait_enabled(hand, timeout=5.0):
+    """Block until every joint reports Enabled.
+
+    ext_state: 0=Init 1=Ready 2=Enabled 3=Stopped. Ramping into motors that are
+    not holding position yet would land the whole ramp at once when they engage.
+    The judgement is made on the newest frame (see drain_latest).
+    """
+    deadline = time.monotonic() + timeout
+    diag_sub = hand.joint_diagnostics().subscribe()
+    had_frame = False
+    seen = 0
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            frame = drain_latest(diag_sub)
+            if frame is None:
+                continue
+            # had_frame separates "nothing arrived" from "an empty frame" for the
+            # message below — seen leaves both at 0.
+            had_frame = True
+            seen = len(frame.joints)
+            # All-Enabled on a short frame would start the ramp while the missing
+            # joints are still coming up, and they would take the step it avoids.
+            if seen != TOTAL_JOINTS:
+                continue
+            if all(e.status_word.ext_state == 2 for e in frame.joints):
+                return
+    finally:
+        diag_sub.close()
+    if not had_frame:
+        raise RuntimeError(
+            "Enable timeout — no joint_diagnostics frame arrived; "
+            "is the hand publishing?"
+        )
+    raise RuntimeError(
+        f"Enable timeout — the newest diagnostics frame reported {seen} of "
+        f"{TOTAL_JOINTS} joints with not all of them Enabled"
+    )
+
+
+def read_current_pose(hand, timeout=3.0):
+    """Return the hand's current joint positions, one per joint.
+
+    A short frame is an error rather than something to ramp from: zip() against
+    it would silently produce a command joint_command().send rejects.
+    """
+    sub = hand.joint_states().subscribe()
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            frame = drain_latest(sub)
+            if frame is not None:
+                if len(frame.joints) != TOTAL_JOINTS:
+                    raise RuntimeError(
+                        f"joint_states reports {len(frame.joints)} online joints, "
+                        f"expected {TOTAL_JOINTS} — every joint must be online to ramp"
+                    )
+                return [j.position for j in frame.joints]
+            time.sleep(0.002)
+        raise RuntimeError("Timed out waiting for joint_states — is the hand publishing?")
+    finally:
+        sub.close()
+
+
+def ramp_to_glove(start, session, skeleton_sub, send, budget, timeout=5.0):
+    """Ease from the hand's current pose to the glove pose, then return the last keypoints.
+
+    The first retargeted frame is otherwise a step input, and a Wuji Hand 2 has
+    no smoothing channel of its own, so the example ramps in software.
+    The endpoint is re-retargeted every frame: the operator keeps moving, so a
+    frozen target would end the ramp with a step.
+    """
+    deadline = time.monotonic() + timeout
+    kp = None
+    while kp is None and time.monotonic() < deadline:
+        kp = read_keypoints(skeleton_sub)
+        if kp is None:
+            time.sleep(budget)
+    if kp is None:
+        raise RuntimeError("Timed out waiting for the glove's first hand_skeleton frame")
+
+    steps = max(int(RAMP_SEC * FPS), 1)
+    start = list(start)
+    for step in range(1, steps + 1):
+        frame_start = time.monotonic()
+        fresh = read_keypoints(skeleton_sub)
+        if fresh is not None:
+            kp = fresh
+        goal = session.step(kp)
+        alpha = step / steps
+        send([a + alpha * (b - a) for a, b in zip(start, goal)])
+        dt = time.monotonic() - frame_start
+        if dt < budget:
+            time.sleep(budget - dt)
+    return kp
+
+
+def teleop(glove, model, send, start=None):
     """Build the retargeting session + glove source, then loop read → retarget → send.
 
     Called *after* the hand's command channel is already open (see run_teleop):
     open the command channel before session initialization so device
     communication remains active during setup.
+
+    ``start`` is the hand's current pose; when given, the first RAMP_SEC seconds
+    ease from it to the glove pose instead of stepping there in one frame.
     """
     session = RetargetSession.for_hand(model, side=SIDE)
     skeleton_sub = glove.hand_skeleton().subscribe()
 
     budget = 1.0 / FPS
     last_kp = None
+    if start is not None:
+        last_kp = ramp_to_glove(start, session, skeleton_sub, send, budget)
     while True:
         frame_start = time.monotonic()
         kp = read_keypoints(skeleton_sub)
@@ -169,9 +296,12 @@ def teleop(glove, model, send):
             time.sleep(budget - dt)
 
 
-def run_teleop(manager) -> int:
+def run_teleop(manager, hand_sn=None, glove_sn=None) -> int:
     """Connect a glove + hand and teleoperate until interrupted.
 
+    ``hand_sn`` / ``glove_sn`` restrict the search to that serial number. Leave
+    them unset to keep the default, which takes the last device of each kind the
+    scan reports — an arbitrary one when several are reachable.
     """
 
     hand_dev = None
@@ -179,12 +309,18 @@ def run_teleop(manager) -> int:
     for d in manager.scan():
         print(f"  SN={d.sn}, Type={d.device_type}, Address={d.address}")
         if d.device_type in (DeviceType.WujiHand2, DeviceType.WujiHand):
-            hand_dev = d
+            if hand_sn is None or d.sn == hand_sn:
+                hand_dev = d
         elif d.device_type == DeviceType.WujiGlove:
-            glove_dev = d
+            if glove_sn is None or d.sn == glove_sn:
+                glove_dev = d
 
     if hand_dev is None or glove_dev is None:
-        print("No Wuji Hand / Wuji Hand 2 found" if hand_dev is None else "No Wuji Glove found")
+        if hand_dev is None:
+            print("No Wuji Hand / Wuji Hand 2 found"
+                  + (f" with SN {hand_sn}" if hand_sn else ""))
+        else:
+            print("No Wuji Glove found" + (f" with SN {glove_sn}" if glove_sn else ""))
         return 1
 
     hand = manager.connect(sn=hand_dev.sn, device_name=hand_dev.sn)
@@ -202,10 +338,15 @@ def run_teleop(manager) -> int:
             # Wuji Hand 2: send MIT position commands via the joint_command publisher.
             # send() takes one JointCommand per joint; position only (velocity/effort 0).
             publisher = hand.joint_command().publish()
+            # Read where the hand actually is before commanding it anywhere, so
+            # teleop can ease into the glove pose (see ramp_to_glove).
+            wait_enabled(hand)
+            start = read_current_pose(hand)
             teleop(
                 glove,
                 model,
                 lambda q: publisher.send([JointCommand(p, 0.0, 0.0) for p in q]),
+                start=start,
             )
         else:
             # First-gen Wuji Hand: drive through a low-pass realtime controller.
@@ -221,7 +362,19 @@ def run_teleop(manager) -> int:
     return 0
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Teleoperate a Wuji Hand from a Wuji Glove.")
+    parser.add_argument("--hand-sn", default=None,
+                        help="Serial number of the hand to drive. "
+                             "Default: the last hand the scan reports.")
+    parser.add_argument("--glove-sn", default=None,
+                        help="Serial number of the glove to read. "
+                             "Default: the last glove the scan reports.")
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     manager = SdkManager.instance()
 
     # Pick the SDK user to run under. This has to happen before connecting: the
@@ -238,7 +391,7 @@ def main() -> int:
 
     exit_code = 0
     try:
-        exit_code = run_teleop(manager)
+        exit_code = run_teleop(manager, args.hand_sn, args.glove_sn)
     finally:
         try:
             manager.switch_user(previous_user["user_id"])

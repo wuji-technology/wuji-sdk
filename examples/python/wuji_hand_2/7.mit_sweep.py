@@ -122,6 +122,69 @@ def close_resource(resource, label, errors):
         errors.append(f"close {label}: {error}")
 
 
+def connect_hand(manager, device_name, sdk):
+    """Scan and connect one Wuji Hand 2 selected from the discovered devices.
+
+    Only Wuji Hand 2 devices are eligible. When several are present, list
+    their serial numbers and prompt for a choice. Enter, or a closed stdin,
+    picks the first.
+    """
+    devices = manager.scan()
+    if not devices:
+        raise RuntimeError(
+            "no device found; check that the device is powered on and "
+            "reachable on the network"
+        )
+    print(f"Found {len(devices)} device(s)")
+    for dev in devices:
+        print(f"  SN={dev.sn}, Type={dev.device_type}, Address={dev.address}")
+    hands = [
+        dev for dev in devices if dev.device_type == sdk.DeviceType.WujiHand2
+    ]
+    if not hands:
+        raise RuntimeError("no Wuji Hand 2 found among the scanned devices")
+    index = 0
+    if len(hands) > 1:
+        print("Wuji Hand 2 devices:")
+        for i, dev in enumerate(hands):
+            print(f"  [{i}] SN={dev.sn}, Address={dev.address}")
+        def _interrupt_on_sigint(_signum, _frame):
+            """Turn Ctrl+C at the prompt into KeyboardInterrupt."""
+            raise KeyboardInterrupt
+
+        previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, _interrupt_on_sigint)
+        try:
+            while True:
+                try:
+                    choice = input(
+                        f"Select Wuji Hand 2 to connect [0-{len(hands) - 1}], "
+                        "Enter picks 0: "
+                    ).strip()
+                except EOFError:
+                    print(
+                        "No terminal input available - connecting the first "
+                        "Wuji Hand 2."
+                    )
+                    break
+                if choice == "":
+                    break
+                try:
+                    selected = int(choice)
+                except ValueError:
+                    selected = -1
+                if not 0 <= selected < len(hands):
+                    print(f"Invalid selection: {choice!r}")
+                    continue
+                index = selected
+                break
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint_handler)
+    chosen = hands[index]
+    print(f"Connecting Wuji Hand 2: SN={chosen.sn}, Address={chosen.address}")
+    return manager.connect(sn=chosen.sn, device_name=device_name)
+
+
 def run_device():
     """Connect, check 20 online joints, enable, and send the sweep."""
     try:
@@ -137,7 +200,7 @@ def run_device():
     exit_code = 0
 
     try:
-        hand = manager.auto_connect(device_name="hand_2_mit_sweep")
+        hand = connect_hand(manager, "hand_2_mit_sweep", wuji_sdk)
         online = int(hand.online_joints_count().get())
         if online != JOINT_COUNT:
             raise RuntimeError(f"expected 20/20 online joints, got {online}/20")

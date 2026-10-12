@@ -8,6 +8,8 @@ callbacks run in background threads.
 Usage: python 0.subscribe_callback.py
 """
 
+from __future__ import annotations
+
 import time
 from functools import partial
 

@@ -19,6 +19,8 @@ Usage:
   python 8.tactile_contact_view.py --sn <serial_number> --seconds 60 --sensitivity 1.5
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 import threading

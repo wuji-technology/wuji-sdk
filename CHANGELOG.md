@@ -7,6 +7,42 @@ and this project uses calendar versioning (YYYY.M.D).
 
 ## [Unreleased]
 
+## [2026.10.12]
+
+### Added
+
+- Added optional `--hand-sn` and `--glove-sn` options to the live teleoperation examples (`examples/python/retargeting/1.teleop_real.py` and `examples/c/retargeting/1_teleop_real.c`), so you can name which devices to drive when more than one is reachable. Without them the examples still take whichever hand and glove the scan reports, as before.
+- Added **Wuji Hand 2** tactile module online query. Python `WujiHand2.fingertip_online()` returns five bools in thumb-to-pinky order, and C `wuji_hand_2_fingertip_online()` fills a five-entry `bool` array. `True` means that finger's tactile module is answering the hand's heartbeat right now. This is live link state, not an installation flag: all `False` means no tactile module is online at that moment, whether none is fitted, one is unplugged, or one is rebooting. Works with every released Wuji Hand 2 firmware.
+- **Python SDK**: Python 3.8 and 3.9 are now supported. Previously the SDK required Python 3.10 or later.
+- **Wuji Hand 2**: After a connection is established, the SDK reads back the `kp` and `kd` of all 20 joints once and writes them to the SDK log as a single line (`param readback sn=<SN> path=mit_params thumb/S1 kp=… kd=… …`). An offline joint is logged as `offline`. If the readback fails, the SDK logs a warning and the connection is not affected.
+
+### Changed
+
+- **Wuji Hand 2**: On firmware v2.6.0 and earlier, which accepts SDK connections on port 7447, when a device doesn't reply to a stream-rate request, Python `Subscription.set_rate()` now raises `WujiException` with the message `Operation timeout - device not responding`, and C `wuji_sub_set_rate()` returns `WUJI_STATUS_ERR_TIMEOUT`. Previously they reported an internal error: a `WujiException` starting with `Internal error:` in Python and `WUJI_STATUS_ERR_INTERNAL` in C.
+
+- SDK logs now record the result of parameter reads and writes, and include the value for configuration, control, and calibration parameters.
+- The Python SDK and the C SDK now run on Ubuntu 20.04 on both x86_64 and ARM64. Previously they required Ubuntu 22.04 or later.
+
+### Deprecated
+
+- **Wuji Hand 2**: Use `hand.fingertip_<finger>_status().get()` and `hand.calibrate_fingertip()`. `hand.tactile_status(finger)`, `hand.tactile_calibrate()`, and the `TactileType`, `TactileState`, and `TactileStatus` classes are deprecated and will be removed in 2026.11; using them emits a `DeprecationWarning`.
+- **C SDK**: Use `wuji_hand_2_get_fingertip_<finger>_status()` and `wuji_hand_2_calibrate_fingertip()`. `wuji_hand_2_tactile_status()`, `wuji_hand_2_tactile_calibrate()`, and the `WujiTactileType` and `WujiTactileState` enums are deprecated and will be removed in 2026.11; calling the functions produces a compiler warning, which fails builds that treat warnings as errors.
+
+### Fixed
+
+- **Wuji Hand 2**: Fixed a jolt at the start of live teleoperation (`examples/python/retargeting/1.teleop_real.py` and `examples/c/retargeting/1_teleop_real.c`). On a Wuji Hand 2 the examples now require all 20 joints to be online and enabled, read the hand's current pose, and ease from it into the glove pose over about one second, re-reading the glove on each frame of the ease. Previously the first command carried the whole difference between the startup pose and the glove pose.
+- **Wuji Hand 2**: Starting with firmware v2.10.0, a firmware upgrade now stops before any data is sent when the hand reports a selected joint as offline, and names the offline joints, for example `thumb_S2`. When the hand rejects the upgrade target, the upgrade now fails with the reason the hand reports, if it reports one. Previously the upgrade reported a generic error without that reason, and on firmware v2.6.0 and earlier it could even report success while the hand had not upgraded anything.
+
+- Fixed device data such as Wuji Glove `emf_poses` pausing for up to about a second, dropping frames, and logging `lagged` warnings while other programs write heavily to the same disk, for example when recording inside a container. Data reception now continues while the disk is busy.
+- **Wuji Hand 2**: Python example 2 and C example 1 now wait until one diagnostics update reports all 20 joints Enabled before commanding the hand. Previously an update covering only the joints that were online counted as the whole hand being ready, so an example could start commanding a hand with joints still disabled.
+- Subscriptions now continue delivering new data after the SDK briefly falls behind. Previously, an internal buffer overflow could silently stop the subscription.
+- **Wuji Hand 2**: `sdk_dropped` in the `joint_diagnostics` communication summary now includes frames dropped by the subscription forwarder. Previously, that forwarding hop was not included in the metric.
+- Fixed **Wuji Glove** `tactile_point_cloud` so every point near the base of the little finger carries a real pressure reading. Previously three points there held a pressure of -1 while three real taxels were missing; the point count is unchanged.
+- **Wuji Hand 2**: Motion examples 6 and 7 (Python and C) now scan for Wuji Hand 2 devices, list the discovered serial numbers, and connect the candidate you choose from that list (when several hands are on the network, the example prompts for the numbered candidate, with Enter or a closed stdin picking the first). Previously both examples auto-connected the single discovered device, which could connect a device of the wrong type and failed whenever more than one device was present.
+- Connecting to a device the SDK found on the network, or that you connect to by address, no longer fails when another program on the same machine, such as a DDS or ROS 2 stack, holds UDP port 7446: the SDK connects without peer discovery and logs a warning that other SDK processes cannot find and share that device on their own, while a device reachable only through another SDK process still needs the port.
+- **Wuji Hand 2**: `joint_diagnostics.comm.e2e_lost` no longer counts frames skipped by `set_rate()` as lost, so lowering a stream rate leaves the loss counters unchanged.
+- **Wuji Hand 2**: The `joint_states` and `joint_diagnostics` subscriptions no longer drop frames or log `Virtual subscription '...' lagged N messages` when the host is busy.
+
 ## [2026.9.22]
 
 ### Added
@@ -19,7 +55,7 @@ and this project uses calendar versioning (YYYY.M.D).
 
 - **Wuji Hand 2**: A device shared through the SDK Bridge now lets other applications read state and receive live updates while one application is connected directly; only the directly connected application can write. Previously other applications could not access a device that was already connected.
 - **Wuji Hand 2**: Joint error descriptions, causes, and suggested actions are now English by default; previously they were in Chinese. Error codes and names are unchanged.
-- **Wuji Hand 2 — BREAKING**: Devices running firmware v2.7.0 or later accept SDK connections on port 50001 instead of port 7447. SDK device discovery picks the right port automatically.
+- **Wuji Hand 2 — BREAKING**: Devices running firmware v2.10.0 or later accept SDK connections on port 50001 instead of port 7447. SDK device discovery picks the right port automatically.
 - **Python SDK — BREAKING**: Failures inside the SDK now raise `WujiException` or one of its subclasses across all public operations. Previously they could surface as `ValueError`, `TypeError`, `RuntimeError`, `TimeoutError`, `PermissionError`, or `OSError`.
 - **Wuji Hand 2**: The Python and C fingertip examples now skip a finger whose sensor info cannot be read and keep decoding the rest; previously the whole example stopped at the first finger without info. They stop only when no finger has info.
 - **Retargeting**: The live teleoperation examples now default to `(kp, kd) = (5.0, 0.1)`. The previous default was `(3.0, 0.05)`.
@@ -359,7 +395,8 @@ and this project uses calendar versioning (YYYY.M.D).
 ### Supported Devices
 - Wuji Glove - Glove with tactile and EMF sensors
 
-[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.9.22...HEAD
+[Unreleased]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.10.12...HEAD
+[2026.10.12]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.9.22...v2026.10.12
 [2026.9.22]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.31...v2026.9.22
 [2026.8.31]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.17...v2026.8.31
 [2026.8.17]: https://github.com/wuji-technology/wuji-sdk/compare/v2026.8.3...v2026.8.17
