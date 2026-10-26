@@ -104,7 +104,7 @@ def main():
             # a recorder, etc.) to connect to the same device concurrently.
             # Pass `options=ConnectOptions(enable_bridge=False)` below to opt out
             # for exclusive single-client use.
-            # Docs: https://docs.wuji.tech/docs/en/wuji-sdk/latest/
+            # Docs: https://docs.wuji.tech/en/docs/wuji-sdk
             glove = manager.connect(sn=dev.sn, device_name=f"glove_{i}")
             print(f"Connected: {glove.serial_number} (FW={glove.version().get()}, {glove.hand_side().get()})")
             if args.hand_model_path is not None:

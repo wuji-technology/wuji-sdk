@@ -1,6 +1,6 @@
 # wuji-sdk
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/wuji-technology/wuji-sdk?cacheSeconds=3600)](https://github.com/wuji-technology/wuji-sdk/releases) ![Coverage](https://raw.githubusercontent.com/wuji-technology/wuji-sdk/badges/coverage.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/wuji-technology/wuji-sdk?cacheSeconds=3600)](https://github.com/wuji-technology/wuji-sdk/releases)
 
 SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other peripherals): automatic device discovery, connection management, and real-time data streaming — rich hand-tracking data (joint angles, skeleton, fingertip poses), tactile/EMF sensing, multi-channel MCAP recording, and hand retargeting (map keypoints to hand joint commands).
 
@@ -13,11 +13,12 @@ SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other perip
 
 Each language folder under examples/ includes a README covering setup and API usage.
 
-The Python SDK is the primary, full-featured interface. The C SDK exposes a C API (`libwuji_sdk_c.so` + `wuji_sdk.h`) for native/embedded integration.
+The Python SDK is the primary, full-featured interface. The C SDK exposes a C API (a shared library — `libwuji_sdk_c.so` on Linux, `libwuji_sdk_c.dylib` on macOS — plus `wuji_sdk.h`) for native/embedded integration.
 
 ## Repository Structure
 
 ```text
+├── docker/                  # Python SDK container example
 ├── examples/
 │   ├── python/              # Python SDK examples and docs (pip install wuji-sdk)
 │   │   ├── README.md
@@ -31,18 +32,17 @@ The Python SDK is the primary, full-featured interface. The C SDK exposes a C AP
 │       ├── wuji_hand/
 │       ├── wuji_hand_2/
 │       └── retargeting/
-├── CHANGELOG.md             # Version history (Python + C SDK)
 ├── LICENSE
 └── README.md
 ```
 
 ## Documentation
 
-For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-glove/latest/).
+For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/en/docs/wuji-sdk).
 
-## Changelog
+## Release notes
 
-See [CHANGELOG.md](CHANGELOG.md) for the version history of both SDKs.
+Release notes for both SDKs are published on the docs site: [Release Notes](https://docs.wuji.tech/en/release-notes).
 
 ## Contact
 

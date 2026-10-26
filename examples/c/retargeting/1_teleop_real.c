@@ -27,7 +27,7 @@
  * Build: point CMake at your extracted SDK tarball (see ../README.md):
  *          cmake -S . -B build \
  *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
- *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
+ *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so   # macOS: .dylib
  *          cmake --build build
  * Run:   ./build/1_teleop_real        (Ctrl+C to stop)
  *        ./build/1_teleop_real --hand-sn <hand SN> --glove-sn <glove SN>
@@ -36,7 +36,7 @@
  * the scan reports. Pass the serial numbers when more than one is reachable.
  */
 
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200809L
 
 #include <signal.h>
 #include <stdbool.h>

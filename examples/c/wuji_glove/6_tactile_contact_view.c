@@ -11,7 +11,7 @@
  * Build: point CMake at your extracted SDK tarball (see ../README.md):
  *          cmake -S . -B build \
  *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
- *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
+ *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so   # macOS: .dylib
  *          cmake --build build
  * Run:   ./build/6_tactile_contact_view <glove_serial> [seconds] [sensitivity]
  */

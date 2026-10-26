@@ -11,7 +11,7 @@
  * Build: point CMake at your build tree / extracted SDK tarball:
  *          cmake -S . -B build \
  *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
- *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
+ *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so   # macOS: .dylib
  *          cmake --build build
  * Run:   ./build/5_export_flash_logs [out-dir]
  */
