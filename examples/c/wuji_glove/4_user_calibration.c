@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200809L
 
 /*
  * Wuji SDK C - Wuji Glove hand model calibration for the current SDK user.

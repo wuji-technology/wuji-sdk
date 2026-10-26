@@ -1,17 +1,18 @@
 # wuji-sdk (C)
 
-A prebuilt C SDK exposing the Wuji SDK over a C API: `libwuji_sdk_c.so` plus a generated `wuji_sdk.h`. It supports device discovery and connection, typed per-stream subscription callbacks (tactile, tactile zones, EMF poses, hand joint angles, hand skeleton, tactile point cloud), and global cross-device coordinate-transform streams (`tf`, `tf_static`). For the Wuji Hand 2 (dexterous hand) it adds typed get/set, control actions (enable/disable, clear faults, emergency stop, user origin — each with an optional per-joint mask), MIT impedance and effort-limit configuration with a per-joint online bitmap, `joint_states` / `joint_diagnostics` subscription streams, and a streaming joint-command publisher.
+A prebuilt C SDK exposing the Wuji SDK over a C API: a shared library (`libwuji_sdk_c.so` on Linux, `libwuji_sdk_c.dylib` on macOS) plus a generated `wuji_sdk.h`. It supports device discovery and connection, typed per-stream subscription callbacks (tactile, tactile zones, EMF poses, hand joint angles, hand skeleton, tactile point cloud), and global cross-device coordinate-transform streams (`tf`, `tf_static`). For the Wuji Hand 2 (dexterous hand) it adds typed get/set, control actions (enable/disable, clear faults, emergency stop, user origin — each with an optional per-joint mask), MIT impedance and effort-limit configuration with a per-joint online bitmap, `joint_states` / `joint_diagnostics` subscription streams, and a streaming joint-command publisher.
 
-**For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-glove/latest/).**
+**For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/en/docs/wuji-sdk).**
 
 > Looking for the Python SDK? See [the Python SDK README](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/README.md).
 
 ## Download
 
-The C SDK ships as a prebuilt tarball attached to each [public Release](https://github.com/wuji-technology/wuji-sdk/releases). Each tarball contains just `lib/`, `include/wuji_sdk.h`, and `LICENSE`. Three targets:
+The C SDK ships as a prebuilt tarball attached to each [public Release](https://github.com/wuji-technology/wuji-sdk/releases). Each tarball contains just `lib/`, `include/wuji_sdk.h`, and `LICENSE`. Four targets:
 
 - `x86_64-linux-gnu` — desktop/server Linux (most dev machines).
 - `aarch64-linux-gnu` — ARM64 Linux (SBCs, Jetson, etc.).
+- `aarch64-macos` — Apple Silicon Macs. The library is `lib/libwuji_sdk_c.dylib`.
 - `aarch64-android` — built for Android NDK integration. The `.so` file lives at `lib/arm64-v8a/` in the jniLibs layout. Drop it into an Android Studio project. It links against Android's bionic, not a host glibc.
 
 ## Supported platforms
@@ -20,15 +21,16 @@ The C SDK ships as a prebuilt tarball attached to each [public Release](https://
 |--------|---------|
 | `x86_64-linux-gnu` | Linux x86_64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
 | `aarch64-linux-gnu` | Linux ARM64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
+| `aarch64-macos` | macOS 11.0 or later on Apple Silicon |
 | `aarch64-android` | Android 10+ (API level ≥ 29), ABI `arm64-v8a` |
 
 Android artifacts link against bionic and support 16 KB pages.
 
 The SDK version itself is in the tarball filename (`wuji-sdk-c-<VER>-<target>.tar.gz`) and the Release tag.
 
-> **Wuji Hand (dexterous hand):** supported on **Linux x86_64 / aarch64
-> (gnu)**. On the Android tarball, the functions are present but return
-> `WUJI_STATUS_ERR_UNSUPPORTED`.
+> **Wuji Hand (dexterous hand):** supported on **Linux x86_64 / aarch64 (gnu)**
+> and **macOS arm64**. On the Android tarball, the functions are present but
+> return `WUJI_STATUS_ERR_UNSUPPORTED`.
 
 ## Quick Start
 
@@ -47,23 +49,28 @@ Compile your program against the header and shared library:
 
 ```bash
 cc my_app.c -I "${SDK}/include" -L "${SDK}/lib" -lwuji_sdk_c -o my_app
-LD_LIBRARY_PATH="${SDK}/lib" ./my_app
+LD_LIBRARY_PATH="${SDK}/lib" ./my_app      # macOS: DYLD_LIBRARY_PATH
 ```
+
+The bundled CMake projects embed an rpath, so binaries built from them need no
+`LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH`.
 
 Complete worked examples (with a CMake build) live in the repo under
 [examples/c/](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c):
 
-- [`wuji_glove/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_glove) — typed per-stream subscription callbacks, runtime stream rate control, online IK custom-URDF selection, SDK user management (`3_user_management`), and hand model calibration (`4_user_calibration`). It also includes three separate tactile examples: `5_tactile_calibration` is the guided one-shot calibration flow; `6_tactile_contact_view` independently subscribes to `tactile_binary`, renders the live 24x31 contact grid, and tunes sensitivity with `+` / `-` after calibration; and `7_tactile_residual_view` subscribes to the continuous signed `tactile_residual` stream and applies an adjustable contact threshold. Training is available in the linux-gnu C SDK builds with model training support.
-- [`wuji_hand/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_hand) — Wuji Hand (first generation), mirroring the Python examples one-to-one: `0_subscribe` (joint_states stream), `1_publish` (hold zero pose via the joint-command publisher + low-pass realtime controller), `2_grasp_loop` (continuous open/close grasp with target-vs-actual readout), and `3_tactile_status` (tactile glove status + pressure summary). Supported in the Linux x86_64 / aarch64 (gnu) tarballs only.
+- [`wuji_glove/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_glove) — typed per-stream subscription callbacks, runtime stream rate control, online IK custom-URDF selection, SDK user management (`3_user_management`), and hand model calibration (`4_user_calibration`). It also includes three separate tactile examples: `5_tactile_calibration` is the guided one-shot calibration flow; `6_tactile_contact_view` independently subscribes to `tactile_binary`, renders the live 24x31 contact grid, and tunes sensitivity with `+` / `-` after calibration; and `7_tactile_residual_view` subscribes to the continuous signed `tactile_residual` stream and applies an adjustable contact threshold. Training is available in the linux-gnu C SDK builds with model training support. `8_offline_pipeline` re-solves recorded data without a connected device.
+- [`wuji_hand/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_hand) — Wuji Hand (first generation), mirroring the Python examples one-to-one: `0_subscribe` (joint_states stream), `1_publish` (hold zero pose via the joint-command publisher + low-pass realtime controller), `2_grasp_loop` (continuous open/close grasp with target-vs-actual readout), and `3_tactile_status` (tactile glove status + pressure summary). Supported in the Linux x86_64 / aarch64 (gnu) and macOS arm64 tarballs.
 - [`wuji_hand_2/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_hand_2) — Wuji Hand 2: `0_subscribe_joint_states` (joint-state stream), `1_control_motion` (drive the hand via the joint-command publisher), `2_hand_info` (identity and per-joint diagnostics), `3_fingertip` (fingertip sensor metadata and force point stream), `4_set_stream_rate` (runtime stream rate control), `5_export_flash_logs` (on-flash log export), `6_opposition` (bilateral recorded four-finger replay), and `7_mit_sweep` (fixed single-joint sweep).
 - [`retargeting/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/retargeting) — hand retargeting, mirroring the Python examples: `0_retarget_session` maps 21 MediaPipe-format hand keypoints to a 20-joint command via `wuji_retarget_session_*` (no hardware required); `1_teleop_real` connects a Wuji Glove and a Wuji Hand or Wuji Hand 2, reads `hand_skeleton` frames from the glove at up to 120 Hz, retargets each frame, and drives the hand in real time — glove keypoints feed directly into `wuji_retarget_session_step`, and the result is sent via the joint-command publisher (Wuji Hand 2) or the low-pass realtime controller (Wuji Hand). It lists the SDK users and asks which one to teleoperate under: press Enter to keep the current user, pick the default user for the built-in hand URDF, or pick a named user to use that user's calibrated hand model — an uncalibrated named user falls back to the built-in URDF.
+
+- [`recording/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/recording) includes `0_record_topics`, which records public topics to MCAP with LZ4, Zstd, or no compression. It records for 30 seconds, pauses for 10 seconds, and records for another 30 seconds before printing per-channel counts. See the command at the start of [0_record_topics.c](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/recording/0_record_topics.c).
 
 Point an example's CMake at the extracted SDK:
 
 ```bash
 cmake -S examples/c/wuji_glove -B build \
   -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"
+  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"   # macOS: libwuji_sdk_c.dylib
 cmake --build build
 ```
 
@@ -97,7 +104,7 @@ two motion targets:
 ```bash
 cmake -S examples/c/wuji_hand_2 -B build/hand2 \
   -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"
+  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"   # macOS: libwuji_sdk_c.dylib
 cmake --build build/hand2 \
   --target 6_opposition 7_mit_sweep
 ```
@@ -111,7 +118,7 @@ Build the Example 6 bundle independently after copying its complete directory:
 cmake -S examples/c/wuji_hand_2/6_opposition \
   -B build/hand2-opposition \
   -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"
+  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"   # macOS: libwuji_sdk_c.dylib
 cmake --build build/hand2-opposition
 ```
 

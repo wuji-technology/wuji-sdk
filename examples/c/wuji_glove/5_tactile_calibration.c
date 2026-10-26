@@ -6,7 +6,7 @@
  *
  * Build: cmake -S . -B build \
  *          -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
- *          -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so
+ *          -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so   # macOS: .dylib
  *        cmake --build build
  * Run:   ./build/5_tactile_calibration <glove_serial> [seconds_per_pose] [epochs]
  */
