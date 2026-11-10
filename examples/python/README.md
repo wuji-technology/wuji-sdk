@@ -2,7 +2,7 @@
 
 Python SDK for Wuji series devices. Provides automatic device discovery, connection management, and real-time data streaming for Wuji Glove, Wuji Hand 2, and other Wuji peripherals. Features a type-safe semantic API with native async/await and callback-based subscription support, multi-channel MCAP recording, and rich hand tracking data including joint angles, skeleton, and fingertip poses.
 
-**For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/en/docs/wuji-sdk).**
+**For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-sdk/latest).**
 
 > Looking for the C SDK? See [the C SDK README](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/README.md).
 
@@ -11,6 +11,22 @@ Python SDK for Wuji series devices. Provides automatic device discovery, connect
 ```bash
 pip install wuji-sdk
 ```
+
+Wheels are published for Linux x86_64 / aarch64 (glibc 2.17+), macOS 11.0 or later on Apple Silicon, and Windows 10 21H2 x64 or later, for CPython 3.8–3.14.
+
+## Windows Examples
+
+Windows supports the following examples.
+
+| Example | Device | Function |
+|---------|--------|----------|
+| [`wuji_glove/0.subscribe_callback.py`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/wuji_glove/0.subscribe_callback.py) | Wuji Glove | Scan, connect, and subscribe with callbacks |
+| [`wuji_glove/1.subscribe_async.py`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/wuji_glove/1.subscribe_async.py) | Wuji Glove | Scan, connect, and subscribe asynchronously |
+| [`wuji_glove/2.recording.py`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/wuji_glove/2.recording.py) | Wuji Glove | Record tactile, EMF pose, and hand skeleton streams to MCAP |
+| [`wuji_hand_2/0.subscribe_callback.py`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/wuji_hand_2/0.subscribe_callback.py) | Wuji Hand 2 | Scan, connect, and subscribe with callbacks |
+| [`wuji_hand_2/1.subscribe_async.py`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/wuji_hand_2/1.subscribe_async.py) | Wuji Hand 2 | Scan, connect, and subscribe asynchronously |
+
+The other examples are available for Linux and macOS. To record Wuji Hand 2 on Windows, use the [C example](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/recording/0_record_topics.c).
 
 ## Quick Start
 
@@ -51,6 +67,7 @@ More examples: [examples/python/](https://github.com/wuji-technology/wuji-sdk/tr
 - `wuji_hand_2/5.export_flash_logs.py`: export the device's on-flash log history to a JSONL file.
 - `wuji_hand_2/6_opposition/opposition.py`: stream either side's recorded four-finger motion at 1 kHz.
 - `wuji_hand_2/7.mit_sweep.py`: run the fixed joint-0 cosine sweep, or render the command sequence offline.
+- `wuji_hand_2/8.position_mode.py`: switch the whole hand to position mode, scale each joint's effort limit, and open and close the hand with position targets.
 - `retargeting/0.retarget_session.py`: map hand keypoints (21×3) to a joint command with `RetargetSession` — no hardware needed.
 - `retargeting/1.teleop_real.py`: live teleoperation — drive a Wuji Hand / Wuji Hand 2 from a Wuji Glove. This example uses `RetargetSession`, and you can replace the glove read with any `(21,3)` keypoint source. It lists the SDK users and asks which one to teleoperate under. Press Enter to keep the current user, pick the default user for the built-in hand URDF, or pick a named user to use that user's calibrated hand model. An uncalibrated named user falls back to the built-in URDF.
 
@@ -59,18 +76,18 @@ More examples: [examples/python/](https://github.com/wuji-technology/wuji-sdk/tr
 ### Wuji Hand 2 Motion Examples
 
 > [!WARNING]
-> Examples 6 and 7 enable motor control and send position commands. On start
+> Examples 6, 7, and 8 enable motor control and send position commands. On start
 > they read the current pose from `joint_states` and ease the hand to the
 > trajectory start over about one second, so the hand begins moving toward a
 > fully extended pose immediately after launch. Keep the hand clear of people,
 > cables, and the bench, place it in a safe pose before running, run with
 > direct supervision, and be ready to stop the device.
 
-Example 7 is a standalone source file. Example 6 is a standalone bundle that
-contains `opposition.py` and Right and Left replay data. Copy the complete
+Examples 7 and 8 are standalone source files. Example 6 is a standalone bundle
+that contains `opposition.py` and Right and Left replay data. Copy the complete
 `6_opposition/` directory to use that example.
 
-Both entries accept no command-line options. Each scans for Wuji Hand 2
+These entries accept no command-line options. Each scans for Wuji Hand 2
 devices, lists the discovered serial numbers, and connects the hand you pick
 by entering its candidate number. When several hands are on the network, the
 prompt lists each numbered candidate (Enter - or a closed stdin - picks the
@@ -78,15 +95,17 @@ first). They require all 20 joints online, enable the hand, ramp from the
 current pose to the trajectory start, and then send a fixed command sequence.
 Example 6 selects and streams one replay file from device handedness.
 
-#### Choose Example 6 or 7
+#### Choose Example 6, 7, or 8
 
 | Example | Motion | Output |
 | --- | --- | --- |
 | `7.mit_sweep.py` | Moves joint 0 through a fixed 0.02 rad, 101-command cosine sweep while the other joints stay at zero | Ramps to the start pose at 1 kHz, publishes the sweep at 50 Hz, then disables and disconnects |
 | `6_opposition/opposition.py` | Streams the connected side's recorded thumb opposition | Ramps to the start pose at 1 kHz, publishes 30,000 recorded commands at 1 kHz, then disables and disconnects |
+| `8.position_mode.py` | Moves all 20 joints from zero to 0.35 rad and back twice in position mode | Scales each joint's effort limit to 80%, sets a 40 Hz command cutoff, ramps to the start pose at 1 kHz, publishes the sweep at 120 Hz, then disables, restores the limit and cutoff, and disconnects |
 
 Example 7 is the smaller motion check. Example 6 replays a complete recorded
-four-finger motion.
+four-finger motion. Example 8 shows the position-mode settings: control mode,
+effort limit, and command cutoff.
 
 #### Run Example 7
 
@@ -115,16 +134,30 @@ it starts, the example ramps from the captured current pose to the first
 recorded frame over about one second. The final recorded frame is the return
 to Open.
 
+#### Run Example 8
+
+Run the fixed supervised position-mode motion:
+
+```bash
+python examples/python/wuji_hand_2/8.position_mode.py
+```
+
+Example 8 requires firmware 3.0.0 or later. It switches the whole hand to
+position mode, scales each joint's effort limit (N·m in position mode) to 80%
+of the value it read, and moves all 20 joints from zero to 0.35 rad and back
+twice. The hand stays in position mode afterwards.
+
 #### Cleanup Behavior
 
 Normal completion disables the hand after the final command. An error or
-interrupt stops further commands and adds no recovery motion. Both examples
-disable the connected hand, close their publishers, and disconnect the
-device. Runtime and cleanup errors return 1. Ctrl-C returns 130.
+interrupt stops further commands and adds no recovery motion. All three
+examples disable the connected hand, close their publishers, and disconnect
+the device. Example 8 also restores the effort limit and command cutoff it
+read. Runtime and cleanup errors return 1. Ctrl-C returns 130.
 
 ## Retargeting
 
-Map human hand keypoints to Wuji Hand joint commands. Retargeting works out of the box — numpy is the only extra dependency (keypoint/qpos arrays):
+Map human hand keypoints to Wuji Hand joint commands. Retargeting works out of the box — NumPy is the only extra dependency for the keypoint and joint-position arrays:
 
 ```bash
 pip install wuji-sdk numpy

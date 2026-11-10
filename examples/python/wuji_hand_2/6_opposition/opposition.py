@@ -253,11 +253,15 @@ def _run_device(*, data_dir=None):
         replay_stream, frame_count = _open_replay(
             _side_for_hand(hand), data_dir=data_dir
         )
+        # Position mode: each joint's firmware position loop tracks the replayed
+        # angles. The mode changes only while the joints are disabled, so switch
+        # the whole hand before enabling.
+        hand.control_mode().set(wuji_sdk.ControlMode.Position)
         hand.enable()
         publisher = hand.joint_command().publish()
 
         def send(qpos):
-            """Publish one flat-20 MIT position command."""
+            """Publish one flat-20 position command."""
             publisher.send(
                 [
                     wuji_sdk.JointCommand(float(position), 0.0, 0.0)

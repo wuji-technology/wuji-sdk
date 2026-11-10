@@ -387,17 +387,12 @@ static int ramp_to_glove(struct WujiJointCommandPublisher *pub,
 
 static int configure_wuji_hand_2(struct WujiDevice *dev)
 {
-    /* MIT impedance: hold each joint softly at its commanded position.
-     * The firmware defaults to MIT control mode; we only set effort limit
-     * and kp/kd, then enable. */
-    if (wuji_hand_2_set_all_effort_limit(dev, 1.5f) != WUJI_STATUS_OK) {
-        fprintf(stderr, "set_all_effort_limit: %s\n", wuji_last_error());
-        return -1;
-    }
-    float kp[NUM_JOINTS], kd[NUM_JOINTS];
-    for (int i = 0; i < NUM_JOINTS; i++) { kp[i] = 5.0f; kd[i] = 0.1f; }
-    if (wuji_hand_2_set_all_mit_params(dev, kp, kd) != WUJI_STATUS_OK) {
-        fprintf(stderr, "set_all_mit_params: %s\n", wuji_last_error());
+    /* Position mode: each joint's firmware position loop tracks the commanded
+     * position, so the teleop loop sends only target angles. The mode changes
+     * only while the joints are disabled, so switch the whole hand first, then
+     * enable. */
+    if (wuji_hand_2_set_control_mode(dev, WUJI_CONTROL_MODE_POSITION) != WUJI_STATUS_OK) {
+        fprintf(stderr, "set_control_mode(POSITION): %s\n", wuji_last_error());
         return -1;
     }
     if (wuji_hand_2_enable(dev, NULL) != WUJI_STATUS_OK) { /* NULL = all joints */

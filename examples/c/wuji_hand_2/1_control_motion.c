@@ -8,10 +8,12 @@
  * follows pos = A·sin(ωt) with velocity feedforward A·ω·cos(ωt), ramped in over
  * the first quarter of each segment, returning to zero between segments.
  *
- * The Wuji Hand 2 runs MIT (impedance) control by default, so there is no
- * control-mode call: we just set the effort limit + kp/kd and enable.
+ * The hand keeps the control mode last set until it restarts, so the example
+ * switches the whole hand to MIT before it sets the effort limit (in A in MIT
+ * mode) and kp/kd.
  *
- * !! WARNING: this MOVES the hand through ±~45° sweeps. Keep it clear. !!
+ * !! WARNING: this MOVES the hand: joint index 2 of each finger sweeps ±25°,
+ * every other joint ±45°. Keep it clear. !!
  *
  * The C publish call sends one 20-joint command frame:
  *   WujiJointCommand cmds[20];   // each {position, velocity, effort}
@@ -53,7 +55,7 @@ static const float AMPLITUDE     = 3.14159265358979f / 4.0f;     /* PI/4        
 static const float AMPLITUDE_J2  = 25.0f * 3.14159265358979f / 180.0f; /* 25 deg  */
 static const float KP            = 3.0f;
 static const float KD            = 0.05f;
-static const float EFFORT_LIMIT  = 1.5f; /* Amps */
+static const float EFFORT_LIMIT  = 1.5f; /* A in MIT mode */
 static const float ENABLE_TIMEOUT_S = 5.0f;
 static const float ZERO_RETURN_S    = 2.0f;
 static const float RAMP_FRACTION    = 0.25f;
@@ -162,10 +164,12 @@ int main(void) {
         goto cleanup;
     }
 
-    /* Configure control: effort limit, per-joint kp/kd, then enable.
-     * (MIT is the device default — no control-mode call.) */
+    /* Configure control: MIT mode, effort limit, per-joint kp/kd, then enable.
+     * The hand keeps the control mode last set until it restarts, so the whole
+     * hand is switched to MIT first. */
     float kp[TOTAL_JOINTS], kd[TOTAL_JOINTS];
     for (int j = 0; j < TOTAL_JOINTS; j++) { kp[j] = KP; kd[j] = KD; }
+    CHECK(wuji_hand_2_set_control_mode(dev, WUJI_CONTROL_MODE_MIT), "set_control_mode(MIT)");
     CHECK(wuji_hand_2_set_all_effort_limit(dev, EFFORT_LIMIT), "set_all_effort_limit");
     CHECK(wuji_hand_2_set_all_mit_params(dev, kp, kd), "set_all_mit_params");
     CHECK(wuji_hand_2_enable(dev, NULL), "enable"); /* NULL mask = whole hand */

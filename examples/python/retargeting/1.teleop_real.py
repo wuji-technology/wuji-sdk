@@ -55,6 +55,7 @@ import time
 import numpy as np
 
 from wuji_sdk import (
+    ControlMode,
     DeviceType,
     HandModel,
     Handedness,
@@ -77,10 +78,10 @@ TOTAL_JOINTS = 20
 
 def configure_wuji_hand_2(hand):
     """Configure + enable a Wuji Hand 2; return the retarget HandModel."""
-    # MIT impedance: hold each joint softly at its commanded position. The
-    # firmware defaults to MIT control mode (control mode is not set from Python).
-    hand.effort_limit().set(1.5)  # Amps, broadcast to all joints
-    hand.mit_params().set((5.0, 0.1))  # (kp, kd) tuple, broadcast to all joints
+    # Position mode: each joint's firmware position loop tracks the commanded
+    # position, so teleop sends only target angles. The mode changes only while
+    # the joints are disabled, so switch the whole hand before enabling.
+    hand.control_mode().set(ControlMode.Position)
     hand.enable()
     return HandModel.WujiHand2
 
@@ -335,8 +336,8 @@ def run_teleop(manager, hand_sn=None, glove_sn=None) -> int:
         # retargeting session — so device communication remains active during
         # setup.
         if is_hand2:
-            # Wuji Hand 2: send MIT position commands via the joint_command publisher.
-            # send() takes one JointCommand per joint; position only (velocity/effort 0).
+            # Wuji Hand 2: send position commands via the joint_command publisher.
+            # send() takes one JointCommand per joint; position mode reads only position.
             publisher = hand.joint_command().publish()
             # Read where the hand actually is before commanding it anywhere, so
             # teleop can ease into the glove pose (see ramp_to_glove).

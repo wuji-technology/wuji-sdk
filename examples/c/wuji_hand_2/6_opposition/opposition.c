@@ -15,6 +15,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #include "wuji_sdk.h"
 
 #define JOINT_COUNT 20u
@@ -230,13 +234,22 @@ static int replay_path_for_side(
     char executable[PATH_MAX];
     const char *filename = side == REPLAY_SIDE_RIGHT
         ? "right.replay" : "left.replay";
-    ssize_t length;
     char *separator;
     int written;
 
+#ifdef __APPLE__
+    char unresolved_executable[PATH_MAX];
+    uint32_t executable_size = sizeof(unresolved_executable);
+
+    if (_NSGetExecutablePath(unresolved_executable, &executable_size) != 0
+        || realpath(unresolved_executable, executable) == NULL) return -1;
+#else
+    ssize_t length;
+
     length = readlink("/proc/self/exe", executable, sizeof(executable) - 1u);
-    if (length <= 0 || (size_t)length >= sizeof(executable)) return -1;
+    if (length <= 0 || (size_t)length >= sizeof(executable) - 1u) return -1;
     executable[length] = '\0';
+#endif
     separator = strrchr(executable, '/');
     if (separator == NULL) return -1;
     *separator = '\0';
@@ -372,7 +385,7 @@ static int connect_hand(struct WujiDevice **out_device) {
     return 0;
 }
 
-/* Publish one flat-20 MIT position command. */
+/* Publish one flat-20 position command. */
 static int send_qpos(
     struct WujiJointCommandPublisher *publisher,
     const float qpos[JOINT_COUNT]) {
@@ -571,6 +584,13 @@ static int run_device(void) {
             fprintf(stderr, "error: replay validation failed: %s (%s)\n",
                     replay_error_detail(reader.error), replay_path);
         }
+        goto cleanup;
+    }
+    /* Position mode: each joint's firmware position loop tracks the replayed
+     * angles. The mode changes only while the joints are disabled, so switch
+     * the whole hand before enabling. */
+    if (wuji_hand_2_set_control_mode(device, WUJI_CONTROL_MODE_POSITION) != WUJI_STATUS_OK) {
+        report_sdk_failure("set_control_mode(POSITION)");
         goto cleanup;
     }
     if (wuji_hand_2_enable(device, NULL) != WUJI_STATUS_OK) {

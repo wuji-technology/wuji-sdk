@@ -19,18 +19,33 @@
  * The `frame` pointer is valid only for the duration of the callback (its heap
  * `joints` array is freed right after the callback returns) — never stash it.
  */
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
+#endif
+
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stddef.h>
 #include <stdatomic.h>
 
 #include "wuji_sdk.h"
 
+#ifdef _WIN32
+static volatile LONG g_stop = 0;
+static BOOL WINAPI on_console_ctrl(DWORD event) {
+    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) return FALSE;
+    InterlockedExchange(&g_stop, 1);
+    return TRUE;
+}
+#else
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int sig) { (void)sig; g_stop = 1; }
+#endif
 
 /* Per-subscription state. `frames` is written by the SDK worker thread and read
  * by main, so it is atomic; `last_print_ms` is touched only by the (single)
@@ -41,9 +56,13 @@ typedef struct {
 } ctx_t;
 
 static uint64_t now_ms(void) {
+#ifdef _WIN32
+    return (uint64_t)GetTickCount64();
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+#endif
 }
 
 static void on_joint_state(WujiFrameKind kind, const WujiJointStateFrame *f, void *ud) {
@@ -64,9 +83,9 @@ static void on_joint_state(WujiFrameKind kind, const WujiJointStateFrame *f, voi
 
     /* The frame carries a FrameHeader (seq + firmware timestamp_us + frame_id,
      * where frame_id is the wrist frame "l_wrist"/"r_wrist"). */
-    printf("seq=%u  frame_id=%s  ts=%lluus  num_joints=%u  (frame #%lu)\n",
-           f->header.seq, f->header.frame_id, (unsigned long long)f->header.timestamp_us,
-           f->num_joints, (unsigned long)fr);
+    printf("seq=%u  frame_id=%s  ts=%" PRIu64 "us  num_joints=%u  (frame #%" PRIu64 ")\n",
+           f->header.seq, f->header.frame_id, (uint64_t)f->header.timestamp_us,
+           f->num_joints, fr);
     printf("  %-4s %-6s %12s %12s %10s\n", "nid", "joint", "position", "velocity", "effort");
     for (size_t i = 0; i < f->joints_len; i++) {
         const WujiJointStateEntry *e = &f->joints[i];
@@ -84,7 +103,14 @@ static void on_joint_state(WujiFrameKind kind, const WujiJointStateFrame *f, voi
 }
 
 int main(void) {
+#ifdef _WIN32
+    if (!SetConsoleCtrlHandler(on_console_ctrl, TRUE)) {
+        fprintf(stderr, "Ctrl+C handler failed: %lu\n", (unsigned long)GetLastError());
+        return 1;
+    }
+#else
     signal(SIGINT, on_sigint);
+#endif
 
     printf("Wuji SDK version: %s\n", wuji_version());
 
@@ -141,12 +167,17 @@ int main(void) {
         fprintf(stderr, "subscribe joint_states: %s\n", wuji_last_error());
         goto cleanup;
     }
+
     printf("Subscribed to joint_states. Ctrl+C to stop.\n");
     fflush(stdout);
 
+#ifdef _WIN32
+    while (!InterlockedCompareExchange(&g_stop, 0, 0)) Sleep(1000);
+#else
     while (!g_stop) sleep(1);
-    printf("\nStopping (%lu frames)...\n",
-           (unsigned long)atomic_load_explicit(&ctx.frames, memory_order_relaxed));
+#endif
+    printf("\nStopping (%" PRIu64 " frames)...\n",
+           (uint64_t)atomic_load_explicit(&ctx.frames, memory_order_relaxed));
 
     wuji_sub_close(sub); /* stop the worker before releasing the device */
 cleanup:
