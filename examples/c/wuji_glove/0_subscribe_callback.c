@@ -12,13 +12,19 @@
  * dedicated SDK worker threads — see the THREADING note above the callbacks.
  */
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <signal.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <unistd.h>
-#include <signal.h>
+#include <inttypes.h>
 
 #include "wuji_sdk.h"
 
@@ -37,8 +43,17 @@ typedef struct {
     uint64_t n_frames;
 } cb_ctx_t;
 
+#ifdef _WIN32
+static volatile LONG g_stop = 0;
+static BOOL WINAPI on_console_ctrl(DWORD event) {
+    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) return FALSE;
+    InterlockedExchange(&g_stop, 1);
+    return TRUE;
+}
+#else
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int sig) { (void)sig; g_stop = 1; }
+#endif
 
 /* Throttle: only print every 30th OK frame so 100Hz streams don't flood. */
 #define BUMP_AND_GATE(ctx_var) \
@@ -92,7 +107,7 @@ static void on_tactile(WujiFrameKind kind, const WujiTactileFrame *f, void *ud) 
     for (size_t i = 0; i < f->data_len; i++) {
         if (f->data[i] > max_val) max_val = f->data[i];
     }
-    printf("[%s][Tactile] seq=%u taxels=%zu max=%.3f (#%lu)\n",
+    printf("[%s][Tactile] seq=%u taxels=%zu max=%.3f (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq, f->data_len, max_val, ctx->n_frames);
 }
 
@@ -102,7 +117,7 @@ static void on_tactile_zones(WujiFrameKind kind, const WujiTactileZones *f, void
     if (kind != WUJI_FRAME_KIND_OK || !f) return;
     BUMP_AND_GATE(ctx);
     float palm = (f->palm_len > 0) ? f->palm[0] : 0.0f;
-    printf("[%s][Zones] seq=%u palm=%.3f (#%lu)\n",
+    printf("[%s][Zones] seq=%u palm=%.3f (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq, palm, ctx->n_frames);
 }
 
@@ -112,12 +127,12 @@ static void on_emf_poses(WujiFrameKind kind, const WujiEmfPoseArray *f, void *ud
     if (kind != WUJI_FRAME_KIND_OK || !f) return;
     BUMP_AND_GATE(ctx);
     if (f->poses_len == 0) {
-        printf("[%s][EmfPoses] seq=%u (no poses) (#%lu)\n",
+        printf("[%s][EmfPoses] seq=%u (no poses) (#%" PRIu64 ")\n",
                ctx->device_name, f->header.seq, ctx->n_frames);
         return;
     }
     const float *p = f->poses[0].pose.position;
-    printf("[%s][EmfPoses] seq=%u pos=[%+.3f,%+.3f,%+.3f] (#%lu)\n",
+    printf("[%s][EmfPoses] seq=%u pos=[%+.3f,%+.3f,%+.3f] (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq, p[0], p[1], p[2], ctx->n_frames);
 }
 
@@ -127,11 +142,11 @@ static void on_joint_angles(WujiFrameKind kind, const WujiHandJointAngles *f, vo
     if (kind != WUJI_FRAME_KIND_OK || !f) return;
     BUMP_AND_GATE(ctx);
     if (f->fingers_len < 5) {
-        printf("[%s][JointAngles] seq=%u (insufficient fingers: %zu) (#%lu)\n",
+        printf("[%s][JointAngles] seq=%u (insufficient fingers: %zu) (#%" PRIu64 ")\n",
                ctx->device_name, f->header.seq, f->fingers_len, ctx->n_frames);
         return;
     }
-    printf("[%s][JointAngles] seq=%u conf=[%.2f,%.2f,%.2f,%.2f,%.2f] (#%lu)\n",
+    printf("[%s][JointAngles] seq=%u conf=[%.2f,%.2f,%.2f,%.2f,%.2f] (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq,
            f->fingers[0].confidence, f->fingers[1].confidence,
            f->fingers[2].confidence, f->fingers[3].confidence,
@@ -145,7 +160,7 @@ static void on_skeleton(WujiFrameKind kind, const WujiHandSkeleton *f, void *ud)
     BUMP_AND_GATE(ctx);
     if (f->joints_len == 0) return;
     const float *p = f->joints[0].pose.position;
-    printf("[%s][Skeleton] seq=%u wrist=[%+.3f,%+.3f,%+.3f] joints=%zu (#%lu)\n",
+    printf("[%s][Skeleton] seq=%u wrist=[%+.3f,%+.3f,%+.3f] joints=%zu (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq, p[0], p[1], p[2], f->joints_len, ctx->n_frames);
 }
 
@@ -155,7 +170,7 @@ static void on_point_cloud(WujiFrameKind kind, const WujiPointCloud *f, void *ud
     if (kind != WUJI_FRAME_KIND_OK || !f) return;
     BUMP_AND_GATE(ctx);
     size_t pts = (f->point_stride > 0) ? f->data_len / f->point_stride : 0;
-    printf("[%s][PointCloud] seq=%u points=%zu frame=%s (#%lu)\n",
+    printf("[%s][PointCloud] seq=%u points=%zu frame=%s (#%" PRIu64 ")\n",
            ctx->device_name, f->header.seq, pts, f->frame_id, ctx->n_frames);
 }
 
@@ -168,12 +183,12 @@ static void on_transforms(WujiFrameKind kind, const WujiFrameTransforms *f, void
     if (kind != WUJI_FRAME_KIND_OK || !f) return;
     BUMP_AND_GATE(ctx);
     if (f->transforms_len == 0) {
-        printf("[%s][%s] (no transforms) (#%lu)\n",
+        printf("[%s][%s] (no transforms) (#%" PRIu64 ")\n",
                ctx->device_name, ctx->stream, ctx->n_frames);
         return;
     }
     const WujiFrameTransform *t = &f->transforms[0];
-    printf("[%s][%s] count=%zu first=%s->%s xyz=[%+.3f,%+.3f,%+.3f] (#%lu)\n",
+    printf("[%s][%s] count=%zu first=%s->%s xyz=[%+.3f,%+.3f,%+.3f] (#%" PRIu64 ")\n",
            ctx->device_name, ctx->stream, f->transforms_len,
            t->parent_frame_id, t->child_frame_id,
            t->translation[0], t->translation[1], t->translation[2], ctx->n_frames);
@@ -216,7 +231,14 @@ static void on_transforms(WujiFrameKind kind, const WujiFrameTransforms *f, void
     } while (0)
 
 int main(void) {
+#ifdef _WIN32
+    if (!SetConsoleCtrlHandler(on_console_ctrl, TRUE)) {
+        fprintf(stderr, "Ctrl+C handler failed: %lu\n", (unsigned long)GetLastError());
+        return 1;
+    }
+#else
     signal(SIGINT, on_sigint);
+#endif
 
     printf("Wuji SDK version: %s\n", wuji_version());
 
@@ -296,9 +318,11 @@ int main(void) {
         printf("Subscribed to %zu streams. Ctrl+C to stop.\n\n", n_subs);
     }
 
-    while (!g_stop && n_subs > 0) {
-        sleep(1);
-    }
+#ifdef _WIN32
+    while (!InterlockedCompareExchange(&g_stop, 0, 0) && n_subs > 0) Sleep(1000);
+#else
+    while (!g_stop && n_subs > 0) sleep(1);
+#endif
     printf("\nShutting down...\n");
 
     /* Close in reverse order: subs → devices → shutdown. */

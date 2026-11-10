@@ -341,6 +341,11 @@ static int run_device(void) {
         fprintf(stderr, "error: Hand 2 requires 20/20 online joints\n");
         goto cleanup;
     }
+    /* The hand keeps the control mode last set until it restarts; switch the whole hand to MIT. */
+    if (wuji_hand_2_set_control_mode(hand, WUJI_CONTROL_MODE_MIT) != WUJI_STATUS_OK) {
+        fprintf(stderr, "error: switch to MIT mode failed: %s\n", wuji_last_error());
+        goto cleanup;
+    }
     if (wuji_hand_2_enable(hand, NULL) != WUJI_STATUS_OK) {
         fprintf(stderr, "error: enable failed: %s\n", wuji_last_error());
         goto cleanup;

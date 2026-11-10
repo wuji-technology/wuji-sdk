@@ -29,7 +29,7 @@ Usage: python 2.publish.py
 import sys
 import time
 
-from wuji_sdk import DeviceType, JointCommand, SdkManager, WujiHand2
+from wuji_sdk import ControlMode, DeviceType, JointCommand, SdkManager, WujiHand2
 
 TOTAL_JOINTS = 20
 PUB_HZ = 200
@@ -41,7 +41,7 @@ HOLD_SECONDS = 5.0
 # the smooth return comes from ramping the target, not from lowering the gains.
 KP = 3.0
 KD = 0.05
-EFFORT_LIMIT = 1.5  # Amps
+EFFORT_LIMIT = 1.5  # A in MIT mode
 
 
 def read_current_positions(hand, timeout=2.0):
@@ -114,17 +114,19 @@ def main():
 
     publisher = None
     try:
-        # 1. Configure control: effort limit, kp/kd. (Firmware defaults to MIT
-        #    mode, so no control_mode set is needed.)
+        # 1. Configure control: MIT mode, effort limit, kp/kd. The hand keeps the
+        #    control mode last set until it restarts, so switch the whole hand
+        #    to MIT.
         #    Polymorphic set: a scalar broadcasts to all joints; a 20-element
         #    list applies per-joint.
+        hand.control_mode().set(ControlMode.Mit)
         hand.effort_limit().set(EFFORT_LIMIT)
         hand.mit_params().set((KP, KD))          # (kp, kd) tuple, broadcast to all joints
         hand.enable()
 
         # 2. Wait for motors to reach Enabled before publishing commands.
-        #    enable() is an action; sending commands too early may race ahead of
-        #    the enable completing.
+        #    A joint takes its current position as the target when it reaches
+        #    Enabled, so it discards every command sent before that.
         #    ext_state: 0=Init 1=Ready 2=Enabled 3=Stopped
         deadline = time.monotonic() + 5.0
         diag_sub = hand.joint_diagnostics().subscribe()

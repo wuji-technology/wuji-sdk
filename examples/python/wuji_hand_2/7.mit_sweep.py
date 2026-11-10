@@ -204,6 +204,9 @@ def run_device():
         online = int(hand.online_joints_count().get())
         if online != JOINT_COUNT:
             raise RuntimeError(f"expected 20/20 online joints, got {online}/20")
+        # The hand keeps the control mode last set until it restarts, so switch
+        # the whole hand to MIT before enabling.
+        hand.control_mode().set(wuji_sdk.ControlMode.Mit)
         hand.enable()
         publisher = hand.joint_command().publish()
         sweep = generate_sweep()
