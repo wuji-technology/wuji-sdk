@@ -1,41 +1,27 @@
 /*
- * Wuji SDK C — Retargeting: RetargetSession (no hardware required).
- *
- * Map human hand keypoints (21 MediaPipe-format landmarks, in meters) to a
- * Wuji Hand joint command (20 values). This is the low-level building block:
- * you supply the keypoints from any source (camera, glove replay, a VR
- * headset, ...), and get back a joint command ready to send to the hand.
- * The C API mirrors the Python `RetargetSession` one-to-one.
- *
- * Flow:
- *   wuji_retarget_session_create(model, side, &session)   -- once
- *   wuji_retarget_session_step(session, kp[63], qpos[20]) -- every frame
- *   wuji_retarget_session_reset(session)                  -- after a tracking gap
- *   wuji_retarget_session_free(session)                   -- when done
- *
- * The session keeps warm-start and smoothing state across frames, so create
- * it once and reuse it in your loop.
- *
- * Build: point CMake at your extracted SDK tarball (see ../README.md):
- *          cmake -S . -B build \
- *            -DWUJI_SDK_INCLUDE_DIR=/path/to/sdk/include \
- *            -DWUJI_SDK_LIB=/path/to/sdk/lib/libwuji_sdk_c.so   # macOS: .dylib
- *          cmake --build build
- * Run:   ./build/0_retarget_session
+ * Purpose:
+ *   Map 21 synthetic hand keypoints to 20 joint positions.
+ * Prerequisites:
+ *   Install the C SDK. No device is required.
+ * Usage:
+ *   Build with CMake as described in ../README.md, selecting 0_retarget_session.
+ *   ./build/0_retarget_session
+ * Expected Behavior:
+ *   Print the right-hand joint command in radians, grouped by finger.
+ *   Exit 0 on completion or Ctrl-C, 1 on execution failure, and 2 on invalid arguments.
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <errno.h>
+#include <string.h>
 
 #include "wuji_sdk.h"
 
-#define NUM_KEYPOINTS 21 /* MediaPipe landmarks: wrist + 5 fingers x 4 */
-#define QPOS_LEN 20      /* joint command length, firmware order */
+#define NUM_KEYPOINTS 21
+#define QPOS_LEN 20
 
-/* A synthetic open-right-hand pose, (21 x 3) in meters, MediaPipe landmark
- * order (row-major xyz). Replace this with your real keypoint source
- * (camera / glove / replay). */
 static void make_open_hand_keypoints(float kp[NUM_KEYPOINTS * 3]) {
-    /* finger base landmark index -> x offset (thumb, index, middle, ring, pinky) */
     static const struct {
         int base;
         float x;
@@ -50,16 +36,20 @@ static void make_open_hand_keypoints(float kp[NUM_KEYPOINTS * 3]) {
             kp[j * 3 + 1] = 0.03f * (float)(k + 1);
         }
     }
-    /* thumb CMC (landmark 1) nearer the palm */
     kp[1 * 3 + 0] = -0.03f;
     kp[1 * 3 + 1] = 0.02f;
     kp[1 * 3 + 2] = 0.01f;
 }
 
-int main(void) {
-    /* Build a session for a right Wuji Hand 2. The hand model selects the
-     * builtin tuning config internally, so you don't deal with config paths.
-     * (Models: WUJI_HAND_MODEL_WUJI_HAND or WUJI_HAND_MODEL_WUJI_HAND2.) */
+static volatile sig_atomic_t stop_requested = 0;
+static void on_sigint(int signum) { (void)signum; stop_requested = 1; }
+
+int main(int argc, char **argv) {
+    if (argc != 1) { fprintf(stderr, "Usage: %s\n", argv[0]); return 2; }
+    if (signal(SIGINT, on_sigint) == SIG_ERR) {
+        fprintf(stderr, "install Ctrl-C handler failed: %s\n", strerror(errno)); return 1;
+    }
+    int result = 0;
     struct WujiRetargetSession *session = NULL;
     WujiStatus st = wuji_retarget_session_create(
         WUJI_HAND_MODEL_WUJI_HAND2, WUJI_HANDEDNESS_RIGHT, &session);
@@ -68,10 +58,11 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    if (stop_requested) goto cleanup;
     float keypoints[NUM_KEYPOINTS * 3];
     make_open_hand_keypoints(keypoints);
 
-    float qpos[QPOS_LEN]; /* radians, firmware joint order */
+    float qpos[QPOS_LEN];
     st = wuji_retarget_session_step(session, keypoints, qpos);
     if (st != WUJI_STATUS_OK) {
         fprintf(stderr, "step failed (%d): %s\n", (int)st, wuji_last_error());
@@ -87,8 +78,10 @@ int main(void) {
                (double)qpos[f * 4 + 2], (double)qpos[f * 4 + 3]);
     }
 
-    /* step(...) every frame; reset() after a tracking gap. */
-    wuji_retarget_session_reset(session);
+    if (!stop_requested && wuji_retarget_session_reset(session) != WUJI_STATUS_OK) {
+        fprintf(stderr, "reset failed: %s\n", wuji_last_error()); result = 1;
+    }
+cleanup:
     wuji_retarget_session_free(session);
-    return EXIT_SUCCESS;
+    return result;
 }

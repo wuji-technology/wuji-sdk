@@ -11,9 +11,9 @@ SDKs for Wuji series devices (Wuji Glove, WujiHand, Wuji Hand 2, and other perip
 | **Python** | `pip install wuji-sdk` (Linux x86_64 and aarch64, macOS arm64, Windows x64) | [examples/python/](examples/python/) |
 | **C** | Prebuilt tarball (Linux, macOS, Android) or ZIP (Windows x64) on each [Release](https://github.com/wuji-technology/wuji-sdk/releases) | [examples/c/](examples/c/) |
 
-Each language folder under examples/ includes a README covering setup and API usage.
+Each language folder under examples/ includes a README covering setup and usage.
 
-On Windows, the supported examples cover scanning, connecting, and subscribing for Wuji Glove and Wuji Hand 2, topic recording for both devices in C, and Wuji Glove recording in Python. See the supported [Python examples](examples/python/README.md#windows-examples) and [C examples](examples/c/README.md#windows-examples). The other examples are available for Linux and macOS.
+On Windows, the supported examples cover scanning, connecting, subscribing, and recording for Wuji Glove and Wuji Hand 2 in C and Python. See the supported [Python examples](examples/python/README.md#windows-examples) and [C examples](examples/c/README.md#windows-examples). The other examples are available for Linux and macOS.
 
 The Python SDK is the primary, full-featured interface. The C SDK exposes a C API (`libwuji_sdk_c.so` on Linux, `libwuji_sdk_c.dylib` on macOS, `wuji_sdk_c.dll` with `libwuji_sdk_c.dll.a` on Windows, plus `wuji_sdk.h`) for native/embedded integration.
 

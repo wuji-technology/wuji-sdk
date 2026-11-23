@@ -3,7 +3,7 @@
  *
  * Auto-detects and connects to a Wuji Hand, enables motors, then streams
  * zero-position commands (20 WujiJointCommand) at 100 Hz for 3 s through
- * a LowPass realtime controller. Mirrors examples/python/wuji_hand/1.publish.py.
+ * a LowPass realtime controller. Mirrors examples/python/wuji_hand/1_publish.py.
  *
  * !! WARNING: this MOVES the hand joints. Keep the hand clear. !!
  *
@@ -57,16 +57,16 @@ int main(void) {
     }
 
     /* Scan and connect to the first Wuji Hand (selected by device_id). */
-    WujiDiscovered *list = NULL;
+    WujiDiscoveredDevice *list = NULL;
     size_t n_dev = 0;
-    if (wuji_scan(&list, &n_dev) != WUJI_STATUS_OK) {
-        fprintf(stderr, "wuji_scan failed: %s\n", wuji_last_error());
+    if (wuji_scan_devices(NULL, &list, &n_dev) != WUJI_STATUS_OK) {
+        fprintf(stderr, "wuji_scan_devices failed: %s\n", wuji_last_error());
         wuji_shutdown();
         return 1;
     }
     if (n_dev == 0) {
         printf("No devices found\n");
-        wuji_discovered_free(list, n_dev);
+        wuji_discovered_device_free(list, n_dev);
         wuji_shutdown();
         return 0;
     }
@@ -77,13 +77,13 @@ int main(void) {
     }
     if (idx == n_dev) {
         printf("No Wuji Hand found among the scanned devices\n");
-        wuji_discovered_free(list, n_dev);
+        wuji_discovered_device_free(list, n_dev);
         wuji_shutdown();
         return 0;
     }
     char sn[64];
     snprintf(sn, sizeof(sn), "%s", list[idx].serial_number);
-    wuji_discovered_free(list, n_dev);
+    wuji_discovered_device_free(list, n_dev);
 
     /* Connect by USB serial number. */
     struct WujiDevice *dev = NULL;
