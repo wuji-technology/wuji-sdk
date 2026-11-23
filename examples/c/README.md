@@ -1,245 +1,230 @@
 # wuji-sdk (C)
 
-A prebuilt C SDK exposing the Wuji SDK over a C API: a shared library (`libwuji_sdk_c.so` on Linux, `libwuji_sdk_c.dylib` on macOS, `wuji_sdk_c.dll` on Windows) plus a generated `wuji_sdk.h`. It supports device discovery and connection, typed per-stream subscription callbacks (tactile, tactile zones, EMF poses, hand joint angles, hand skeleton, tactile point cloud), and global cross-device coordinate-transform streams (`tf`, `tf_static`). For the Wuji Hand 2 (dexterous hand) it adds typed get/set, control actions (enable/disable, clear faults, emergency stop, user origin — each with an optional per-joint mask), MIT impedance and effort-limit configuration with a per-joint online bitmap, `joint_states` / `joint_diagnostics` subscription streams, and a streaming joint-command publisher.
+C examples for Wuji Glove, Wuji Hand 2, Wuji Hand, and hand retargeting. Build them against the prebuilt SDK header and shared library.
 
-**For detailed documentation, see the [Wuji Docs Center](https://docs.wuji.tech/docs/en/wuji-sdk/latest).**
-
-> Looking for the Python SDK? See [the Python SDK README](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/python/README.md).
+See the [SDK documentation](https://docs.wuji.tech/docs/en/wuji-sdk/latest) for API details and the [Python examples](../python/README.md) for the Python SDK.
 
 ## Download
 
-The C SDK ships as prebuilt archives attached to each [Release](https://github.com/wuji-technology/wuji-sdk/releases). Every archive includes `include/wuji_sdk.h`. Linux, macOS, and Android use a `.tar.gz` with `lib/` and `LICENSE`. Windows x64 uses a `.zip` with `bin/`, `lib/`, `LICENSE`, and `licenses/`. Five targets:
+Download the C SDK archive for your platform from [Releases](https://github.com/wuji-technology/wuji-sdk/releases) and extract it. Download or clone the [repository](https://github.com/wuji-technology/wuji-sdk) for the example source files. Use the source tag that matches your SDK release.
 
-- `x86_64-linux-gnu` — desktop/server Linux (most dev machines).
-- `aarch64-linux-gnu` — ARM64 Linux (SBCs, Jetson, etc.).
-- `aarch64-macos` — Apple Silicon Macs. The library is `lib/libwuji_sdk_c.dylib`.
-- `aarch64-android` — built for Android NDK integration. The `.so` file lives at `lib/arm64-v8a/` in the jniLibs layout. Drop it into an Android Studio project. It links against Android's bionic, not a host glibc.
-- `x86_64-windows-gnullvm` — Windows x64. Link against `lib/libwuji_sdk_c.dll.a` and ship `bin/wuji_sdk_c.dll` and `bin/libunwind.dll` next to your executable.
+Linux, macOS, and Android archives use the name `wuji-sdk-c-<VERSION>-<TARGET>.tar.gz`. Windows uses `wuji-sdk-c-<VERSION>-x86_64-windows-gnullvm.zip`. Each archive includes `include/wuji_sdk.h` and the library for its target. The Windows archive also contains runtime DLLs in `bin/` and dependency licenses in `licenses/`.
 
-## Supported platforms
+## Supported Platforms
 
-| Target | Runs on |
-|--------|---------|
-| `x86_64-linux-gnu` | Linux x86_64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
-| `aarch64-linux-gnu` | Linux ARM64, glibc ≥ 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
-| `aarch64-macos` | macOS 11.0 or later on Apple Silicon |
-| `aarch64-android` | Android 10+ (API level ≥ 29), ABI `arm64-v8a` |
-| `x86_64-windows-gnullvm` | Windows 10 21H2 x64 or later, Windows Server 2019+ |
+| Target | Requirements | Library |
+| --- | --- | --- |
+| `x86_64-linux-gnu` | Linux x86_64, glibc 2.31 or later | `lib/libwuji_sdk_c.so` |
+| `aarch64-linux-gnu` | Linux ARM64, glibc 2.31 or later | `lib/libwuji_sdk_c.so` |
+| `aarch64-macos` | macOS 11.0 or later on Apple Silicon | `lib/libwuji_sdk_c.dylib` |
+| `aarch64-android` | Android 10 or later, API level 29 or later, `arm64-v8a` | `lib/arm64-v8a/libwuji_sdk_c.so` |
+| `x86_64-windows-gnullvm` | Windows 10 21H2 x64 or later, or Windows Server 2019 or later | `lib/libwuji_sdk_c.dll.a` and `bin/wuji_sdk_c.dll` |
 
-Android artifacts link against bionic and support 16 KB pages.
+The Android library uses bionic, supports 16 KB pages, and is intended for Android NDK integration. The build commands below target desktop platforms.
 
-The SDK version itself is in the archive filename (`wuji-sdk-c-<VER>-<target>.tar.gz`, Windows: `.zip`) and the Release tag.
-
-> **Wuji Hand (dexterous hand):** supported on **Linux x86_64 / aarch64 (gnu)**
-> and **macOS arm64**. On the Android and Windows packages, the functions are
-> present but return `WUJI_STATUS_ERR_UNSUPPORTED`.
-
-## Windows Examples
-
-Windows supports the following examples with LLVM-MinGW and MSVC. Each CMake project builds only the listed target on Windows. The other examples are available for Linux and macOS.
-
-| Example | Device | Function |
-|---------|--------|----------|
-| [`wuji_glove/0_subscribe_callback.c`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/wuji_glove/0_subscribe_callback.c) | Wuji Glove | Scan, connect, and subscribe with callbacks |
-| [`wuji_hand_2/0_subscribe_joint_states.c`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/wuji_hand_2/0_subscribe_joint_states.c) | Wuji Hand 2 | Scan, connect, and subscribe to joint states |
-| [`recording/0_record_topics.c`](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/recording/0_record_topics.c) | Wuji Glove and Wuji Hand 2 | Connect by serial number and record selected topics, with pause and resume |
-
-The subscription examples handle Ctrl+C and Ctrl+Break on Windows and release subscriptions and device connections before exiting.
-
-## Quick Start
-
-The commands below compile your C application saved as `my_app.c`, which includes `wuji_sdk.h`. For the supplied example source files, see [Build with CMake](#build-with-cmake).
-
-### Linux and macOS
-
-Download and extract the archive for your platform:
-
-```bash
-# Replace <TAG> with the version you want, e.g. v2026.5.26
-TAG=<TAG>
-VER="${TAG#v}"                              # tarball filenames drop the leading `v`
-SDK="wuji-sdk-c-${VER}-x86_64-linux-gnu"    # swap the triple for your platform
-
-curl -L "https://github.com/wuji-technology/wuji-sdk/releases/download/${TAG}/${SDK}.tar.gz" | tar xz
-cc my_app.c -I "${SDK}/include" -L "${SDK}/lib" -lwuji_sdk_c -o my_app
-```
-
-Run your application on Linux:
-
-```bash
-LD_LIBRARY_PATH="${SDK}/lib" ./my_app
-```
-
-Run your application on macOS:
-
-```bash
-DYLD_LIBRARY_PATH="${SDK}/lib" ./my_app
-```
-
-### Windows
-
-Use PowerShell with the LLVM-MinGW `clang` compiler on `PATH`. Choose a tag from [Release](https://github.com/wuji-technology/wuji-sdk/releases) that includes the Windows x64 archive, and replace `<TAG>` below with that tag.
-
-```powershell
-$Tag = "<TAG>"
-$Archive = "wuji-sdk-c-$($Tag.TrimStart('v'))-x86_64-windows-gnullvm"
-Invoke-WebRequest "https://github.com/wuji-technology/wuji-sdk/releases/download/$Tag/$Archive.zip" -OutFile "$Archive.zip"
-Expand-Archive "$Archive.zip" -DestinationPath .
-$Sdk = (Resolve-Path "$Archive").Path
-clang my_app.c -I "$Sdk/include" "$Sdk/lib/libwuji_sdk_c.dll.a" -o my_app.exe
-Copy-Item "$Sdk/bin/*.dll" .
-./my_app.exe
-```
-
-Keep the copied DLLs beside your executable when distributing the application. To build the repository examples, see [Build with CMake](#build-with-cmake).
-
-## Examples
-
-The example directories contain source files and CMake projects. See [Build with CMake](#build-with-cmake) for build commands.
-
-- [`wuji_glove/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_glove) — typed per-stream subscription callbacks, runtime stream rate control, online IK custom-URDF selection, SDK user management (`3_user_management`), and hand model calibration (`4_user_calibration`). It also includes three separate tactile examples: `5_tactile_calibration` is the guided one-shot calibration flow; `6_tactile_contact_view` independently subscribes to `tactile_binary`, renders the live 24x31 contact grid, and tunes sensitivity with `+` / `-` after calibration; and `7_tactile_residual_view` subscribes to the continuous signed `tactile_residual` stream and applies an adjustable contact threshold. Training is available in the linux-gnu C SDK builds with model training support. `8_offline_pipeline` re-solves recorded data without a connected device.
-- [`wuji_hand/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_hand) — Wuji Hand (first generation), mirroring the Python examples one-to-one: `0_subscribe` (joint_states stream), `1_publish` (hold zero pose via the joint-command publisher + low-pass realtime controller), `2_grasp_loop` (continuous open/close grasp with target-vs-actual readout), and `3_tactile_status` (tactile glove status + pressure summary). Supported in the Linux x86_64 / aarch64 (gnu) and macOS arm64 tarballs.
-- [`wuji_hand_2/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/wuji_hand_2) — Wuji Hand 2: `0_subscribe_joint_states` (joint-state stream), `1_control_motion` (drive the hand via the joint-command publisher), `2_hand_info` (identity and per-joint diagnostics), `3_fingertip` (fingertip sensor metadata and force point stream), `4_set_stream_rate` (runtime stream rate control), `5_export_flash_logs` (on-flash log export), `6_opposition` (bilateral recorded four-finger replay), and `7_mit_sweep` (fixed single-joint sweep). Read the [motion example safety instructions](#wuji-hand-2-motion-examples) before running examples 6 and 7.
-- [`retargeting/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/retargeting) — hand retargeting, mirroring the Python examples: `0_retarget_session` maps 21 MediaPipe-format hand keypoints to a 20-joint command via `wuji_retarget_session_*` (no hardware required); `1_teleop_real` connects a Wuji Glove and a Wuji Hand or Wuji Hand 2, reads `hand_skeleton` frames from the glove at up to 120 Hz, retargets each frame, and drives the hand in real time — glove keypoints feed directly into `wuji_retarget_session_step`, and the result is sent via the joint-command publisher (Wuji Hand 2) or the low-pass realtime controller (Wuji Hand). It lists the SDK users and asks which one to teleoperate under: press Enter to keep the current user, pick the default user for the built-in hand URDF, or pick a named user to use that user's calibrated hand model — an uncalibrated named user falls back to the built-in URDF.
-- [`recording/`](https://github.com/wuji-technology/wuji-sdk/tree/main/examples/c/recording) includes `0_record_topics`, which records public topics to MCAP with LZ4, Zstd, or no compression. It records for 30 seconds, pauses for 10 seconds, and records for another 30 seconds before printing per-channel counts. See the command at the start of [0_record_topics.c](https://github.com/wuji-technology/wuji-sdk/blob/main/examples/c/recording/0_record_topics.c).
+Wuji Hand requires the Linux or macOS SDK package. Its functions return `WUJI_STATUS_ERR_UNSUPPORTED` in the Android and Windows packages. See [Windows Examples](#windows-examples) for the Windows example list.
 
 ## Build with CMake
 
-Download and extract the SDK as described in [Quick Start](#quick-start). Run the following commands from the repository root, where `examples/c/` is available. Set `SDK` (Linux/macOS) or `Sdk` (PowerShell) to the absolute path of the extracted SDK directory.
+Install CMake 3.16 or later and a C11 compiler. Run the commands from the repository root, which contains `examples/`. Replace `path/to/extracted-sdk` with the SDK directory you extracted.
 
 ### Linux and macOS
 
-On Linux, use `libwuji_sdk_c.so`. On macOS, replace it with `libwuji_sdk_c.dylib`.
+Set the SDK path and library. On macOS, use `libwuji_sdk_c.dylib` in place of `libwuji_sdk_c.so`:
 
 ```bash
-cmake -S examples/c/wuji_glove -B build \
+SDK="$(cd path/to/extracted-sdk && pwd)"
+SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"
+cmake -S examples/c/wuji_glove -B build/glove \
   -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"
-cmake --build build
+  -DWUJI_SDK_LIB="${SDK_LIB}"
+cmake --build build/glove
 ```
 
-These CMake projects embed an RPATH, so their executables need no `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` setting.
+CMake embeds the SDK library path in the executables, so no `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` setting is needed while the SDK remains at that path.
 
 ### Windows with LLVM-MinGW
 
-Put LLVM-MinGW, CMake, and Ninja on `PATH`. Link the import library and pass `bin/` as the runtime directory. The build copies the DLLs beside the executable.
+Put LLVM-MinGW, CMake, and Ninja on `PATH`, then run in PowerShell:
 
 ```powershell
-cmake -S examples/c/wuji_glove -B build -G Ninja `
+$Sdk = (Resolve-Path "path/to/extracted-sdk").Path
+cmake -S examples/c/wuji_glove -B build/glove -G Ninja `
   -DCMAKE_C_COMPILER=clang `
   -DWUJI_SDK_INCLUDE_DIR="$Sdk/include" `
   -DWUJI_SDK_LIB="$Sdk/lib/libwuji_sdk_c.dll.a" `
   -DWUJI_SDK_RUNTIME_DIR="$Sdk/bin"
-cmake --build build
+cmake --build build/glove
 ```
 
 ### Windows with MSVC
 
-Use Developer PowerShell for Visual Studio 2022 17.5 or later, with CMake and Ninja on `PATH`. Use a separate build directory for each compiler. The build copies the DLLs beside the executable.
+Use Developer PowerShell for Visual Studio 2022 17.5 or later, with CMake and Ninja on `PATH`. Use a separate build directory for each compiler:
 
 ```powershell
-cmake -S examples/c/wuji_glove -B build-msvc -G Ninja `
+$Sdk = (Resolve-Path "path/to/extracted-sdk").Path
+cmake -S examples/c/wuji_glove -B build/glove-msvc -G Ninja `
   -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=Release `
   -DWUJI_SDK_INCLUDE_DIR="$Sdk/include" `
   -DWUJI_SDK_LIB="$Sdk/lib/libwuji_sdk_c.dll.a" `
   -DWUJI_SDK_RUNTIME_DIR="$Sdk/bin"
-cmake --build build-msvc
+cmake --build build/glove-msvc
 ```
 
-## Wuji Hand 2 Motion Examples
+Both Windows builds copy the runtime DLLs beside the executables. Keep those DLLs with the executables when moving the build.
+
+## Quick Start
+
+After building the Wuji Glove examples, scan and list devices, then connect one Wuji Glove and print its identity:
+
+```bash
+./build/glove/0_connect
+```
+
+Automatic connection requires exactly one discovered device. If several devices are present, use the serial number from the scan:
+
+```bash
+./build/glove/0_connect --sn DEVICE_SN
+```
+
+On Windows, run `./build/glove/0_connect.exe` in PowerShell. For the MSVC build above, use `build/glove-msvc/` instead.
+
+To use another category, replace `examples/c/wuji_glove` in the CMake command with `examples/c/wuji_hand_2`, `examples/c/wuji_hand`, or `examples/c/retargeting`, and choose a separate build directory. Each category has its own CMake project. For ordinary examples, run the executable named after the source file without the `.c` extension. For Wuji Hand 2, start with [`0_connect.c`](wuji_hand_2/0_connect.c).
+
+## Examples
+
+Each source file starts with its prerequisites, usage, and expected behavior. Ordinary examples are standalone files. Copy the complete directory for examples with bundled data. Corresponding Python and C examples use the same number and name. Python-only async subscription examples appear last.
+
+The C SDK uses callback subscriptions. It has no async/await equivalent of the Python `subscribe_async` examples.
+
+### Wuji Glove
+
+| Example | Function | Preparation |
+| --- | --- | --- |
+| [`0_connect.c`](wuji_glove/0_connect.c) | Scan, connect, and list parameters and topics. Set connection options when using a serial number. | One Wuji Glove. |
+| [`1_subscribe_callback.c`](wuji_glove/1_subscribe_callback.c) | Receive glove streams, including palm IMU and fingertip poses, through callbacks. | One Wuji Glove. |
+| [`2_recording.c`](wuji_glove/2_recording.c) | Record tactile, EMF pose, and hand skeleton streams to MCAP, with pause, resume, live status, quality metrics, and alerts. | Supply `--output FILE`. |
+| [`3_offline_pipeline.c`](wuji_glove/3_offline_pipeline.c) | Compute hand tracking and IMU fusion from synthetic frames. | No device required. |
+| [`4_user.c`](wuji_glove/4_user.c) | Manage SDK users and export, validate, or import their data. | No device required. |
+| [`5_calibration.c`](wuji_glove/5_calibration.c) | Run hand model calibration with terminal guidance or text feedback. | Select a named SDK user. |
+| [`6_set_stream_rate.c`](wuji_glove/6_set_stream_rate.c) | Set the EMF pose stream rate and restore its default. | One Wuji Glove. |
+| [`7_tactile_calibration.c`](wuji_glove/7_tactile_calibration.c) | Collect motions, review recordings, and train a tactile contact model. | SDK build with model training support. |
+| [`8_tactile_contact_view.c`](wuji_glove/8_tactile_contact_view.c) | Display tactile contacts and adjust sensitivity. | Calibrated Wuji Glove. |
+| [`9_tactile_residual_view.c`](wuji_glove/9_tactile_residual_view.c) | Display tactile residuals and adjust the display threshold. | Calibrated Wuji Glove. |
+| [`10_set_hand_model_path.c`](wuji_glove/10_set_hand_model_path.c) | Set and read back a custom hand model path. | Named SDK user and `--hand-model-path FILE`. |
+| [`11_time_sync.c`](wuji_glove/11_time_sync.c) | Synchronize the glove clock and print timing measurements. | One Wuji Glove. |
+| [`12_network_config.c`](wuji_glove/12_network_config.c) | Read IP and port, and optionally write new settings. | Supply `--ip` or `--port` to change settings. |
+| [`13_reboot.c`](wuji_glove/13_reboot.c) | Send a device reboot request. | Reboots the connected device. |
+
+### Wuji Hand 2
+
+| Example | Function | Preparation |
+| --- | --- | --- |
+| [`0_connect.c`](wuji_hand_2/0_connect.c) | Scan, connect, and list parameters and topics. Set connection options when using a serial number. | One Wuji Hand 2. |
+| [`1_subscribe_callback.c`](wuji_hand_2/1_subscribe_callback.c) | Receive joint states and IMU data through callbacks. | One Wuji Hand 2. |
+| [`2_publish.c`](wuji_hand_2/2_publish.c) | Return all joints to zero and hold through published commands. | Firmware 3.1.0 or later. All joints online. Moves the hand. |
+| [`3_hand_info.c`](wuji_hand_2/3_hand_info.c) | Read identity, effort limits, and diagnostics with fault descriptions. | One Wuji Hand 2. |
+| [`4_set_stream_rate.c`](wuji_hand_2/4_set_stream_rate.c) | Set the joint-state stream rate and restore its default. | One Wuji Hand 2. |
+| [`5_export_flash_logs.c`](wuji_hand_2/5_export_flash_logs.c) | Export device log history to JSONL. | One Wuji Hand 2. |
+| [`6_opposition/opposition.c`](wuji_hand_2/6_opposition/opposition.c) | Replay the recorded thumb-opposition trajectory in position mode. | Firmware 3.0.0 or later and bundled replay data. |
+| [`7_mit_sweep.c`](wuji_hand_2/7_mit_sweep.c) | Move joint 0 through a cosine sweep in MIT_V2 mode. | Firmware 3.1.0 or later. All joints online. Moves the hand. |
+| [`8_position_mode.c`](wuji_hand_2/8_position_mode.c) | Move all joints through a cosine sweep in position mode. | Firmware 3.0.0 or later. All joints online. |
+| [`9_recording.c`](wuji_hand_2/9_recording.c) | Record joint states and diagnostics to MCAP, with pause, resume, live status, quality metrics, and alerts. | Supply `--output FILE`. |
+| [`10_emergency_stop.c`](wuji_hand_2/10_emergency_stop.c) | Send a whole-hand emergency stop. | One Wuji Hand 2. |
+| [`11_clear_fault.c`](wuji_hand_2/11_clear_fault.c) | Disable all joints and explicitly clear faults. | Resolve the fault cause first. |
+| [`12_network_config.c`](wuji_hand_2/12_network_config.c) | Read IP and port, and optionally write new settings. | Supply `--ip` or `--port` to change settings. |
+| [`13_reboot.c`](wuji_hand_2/13_reboot.c) | Send a device reboot request. | Reboots the connected device. |
 
 > [!WARNING]
-> Examples 6 and 7 enable motor control and send position commands. On start
-> they read the current pose from `joint_states` and ease the hand to the
-> trajectory start over about one second, so the hand begins moving toward a
-> fully extended pose immediately after launch. Keep the hand clear of people,
-> cables, and the bench, place it in a safe pose before running, run with
-> direct supervision, and be ready to stop the device.
+> Motion examples enable the hand and start moving it. Keep it clear of people, cables, and nearby objects. Run with direct supervision and be ready to stop the device. Check the source file's prerequisites and expected motion before running.
 
-Example 7 is a standalone source file. Example 6 is a standalone bundle that
-contains `opposition.c`, its own CMake project, and Right and Left replay data.
-Copy the complete `6_opposition/` directory to use that example.
+Copy the complete [`6_opposition/`](wuji_hand_2/6_opposition/) directory, including its replay data. When building the Wuji Hand 2 category, run `6_opposition/6_opposition` inside its build directory. CMake copies `data/` beside the executable. Keep them together when moving the build.
 
-Each entry accepts no command-line options. Examples 6 and 7 scan for Wuji
-Hand 2 devices, list the discovered serial numbers, and connect the hand you
-pick by entering its candidate number. When several hands are on the network,
-the prompt lists each numbered candidate (Enter - or a closed stdin - picks the
-first). They require all 20 joints online, enable the hand, ramp from the
-current pose to the trajectory start, and then send a fixed command sequence.
-Example 6 selects and streams one replay file from device handedness.
+### Wuji Hand
 
-### Build the C Examples
+These examples use the first-generation Wuji Hand. Keep the hand clear of people and objects when running `publish` or `grasp_loop`.
 
-Configure the Wuji Hand 2 directory against the extracted SDK, then build the
-two motion targets:
-
-```bash
-cmake -S examples/c/wuji_hand_2 -B build/hand2 \
-  -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"   # macOS: libwuji_sdk_c.dylib
-cmake --build build/hand2 \
-  --target 6_opposition 7_mit_sweep
-```
-
-On Linux and macOS, the Hand 2 CMake project builds all targets from 0 through 7 when you omit `--target`. On Windows, it builds only `0_subscribe_joint_states`.
-
-Build the Example 6 bundle independently after copying its complete directory:
-
-```bash
-cmake -S examples/c/wuji_hand_2/6_opposition \
-  -B build/hand2-opposition \
-  -DWUJI_SDK_INCLUDE_DIR="${SDK}/include" \
-  -DWUJI_SDK_LIB="${SDK}/lib/libwuji_sdk_c.so"   # macOS: libwuji_sdk_c.dylib
-cmake --build build/hand2-opposition
-```
-
-The build copies `data/right.replay` and `data/left.replay` beside the
-executable. Keep the generated `data/` directory with the binary.
-
-### Choose Example 6 or 7
-
-| Example | Motion | Output |
+| Example | Function | Preparation |
 | --- | --- | --- |
-| `7_mit_sweep` | Moves joint 0 through a fixed 0.02 rad, 101-command cosine sweep while the other joints stay at zero | Ramps to the start pose at 1 kHz, publishes the sweep at 50 Hz, then disables and disconnects |
-| `6_opposition` | Streams the connected side's recorded thumb opposition | Ramps to the start pose at 1 kHz, publishes 30,000 recorded commands at 1 kHz, then disables and disconnects |
+| [`0_subscribe.c`](wuji_hand/0_subscribe.c) | Receive joint states. | One Wuji Hand. |
+| [`1_publish.c`](wuji_hand/1_publish.c) | Publish zero-position commands. | One Wuji Hand. |
+| [`2_grasp_loop.c`](wuji_hand/2_grasp_loop.c) | Open and close the four non-thumb fingers. | One Wuji Hand. |
+| [`3_tactile_status.c`](wuji_hand/3_tactile_status.c) | Read tactile glove attachment status and pressure. | Attach the tactile glove before connecting the hand. |
 
-Example 7 provides one conservative joint motion. Example 6 replays a complete
-recorded four-finger motion.
+### Retargeting
 
-### Run Example 7
+For teleoperation with Wuji Hand 2, use firmware 3.0.0 or later. The example prompts you to select an SDK user and moves the connected hand. Keep the hand clear of people and objects.
 
-Run the fixed supervised motion:
+| Example | Function | Preparation |
+| --- | --- | --- |
+| [`0_retarget_session.c`](retargeting/0_retarget_session.c) | Map synthetic hand keypoints to joint positions. | No device required. |
+| [`1_teleop_real.c`](retargeting/1_teleop_real.c) | Drive a Wuji Hand or Wuji Hand 2 from Wuji Glove keypoints. | Hand and glove with matching handedness. |
 
-```bash
-./build/hand2/7_mit_sweep
-```
+## Windows Examples
 
-Example 7 sends a fixed 101-command cosine sweep. Joint 0 moves from zero to
-0.02 rad and back to zero. The other 19 joints remain at zero.
+The Wuji Glove and Wuji Hand 2 CMake projects build these targets on Windows with LLVM-MinGW or MSVC.
 
-### Run Example 6
+| Example | Device | Function |
+| --- | --- | --- |
+| [`wuji_glove/0_connect.c`](wuji_glove/0_connect.c) | Wuji Glove | Connect automatically or by serial number |
+| [`wuji_glove/1_subscribe_callback.c`](wuji_glove/1_subscribe_callback.c) | Wuji Glove | Connect and subscribe with callbacks |
+| [`wuji_glove/2_recording.c`](wuji_glove/2_recording.c) | Wuji Glove | Record tactile, EMF pose, and hand skeleton streams, with pause and resume |
+| [`wuji_hand_2/0_connect.c`](wuji_hand_2/0_connect.c) | Wuji Hand 2 | Scan and list devices, then connect automatically or by serial number |
+| [`wuji_hand_2/1_subscribe_callback.c`](wuji_hand_2/1_subscribe_callback.c) | Wuji Hand 2 | Connect and subscribe to joint states |
+| [`wuji_hand_2/9_recording.c`](wuji_hand_2/9_recording.c) | Wuji Hand 2 | Record joint states and diagnostics to MCAP, with pause and resume |
 
-Connect one Wuji Hand 2 and replay the recording selected by its handedness:
+The remaining C examples use the Linux or macOS SDK packages.
 
-```bash
-./build/hand2/6_opposition/6_opposition
-```
+## Migrating Wuji Hand 2 to MIT_V2
 
-Example 6 selects `data/right.replay` or `data/left.replay` from device
-handedness. It validates the file header and length before enable, then streams
-every recorded qpos once at a fixed 1 kHz command rate. The recorded sequence
-itself adds no interpolation, resampling, smoothing, or recovery motion; before
-it starts, the example ramps from the captured current pose to the first
-recorded frame over about one second. The final recorded frame is the return
-to Open.
+Use `ControlMode.MitV2` / `"mit_v2"` in Python, or
+`WUJI_CONTROL_MODE_MIT_V2` in C, for physical joint-torque control.
+MIT (`WUJI_CONTROL_MODE_MIT`) retains its previous behavior and is deprecated.
 
-### Cleanup Behavior
+| Quantity | `WUJI_CONTROL_MODE_MIT` | `WUJI_CONTROL_MODE_MIT_V2` |
+| --- | --- | --- |
+| Position / velocity | rad / rad/s | rad / rad/s |
+| Kp / Kd | Firmware-internal units; not convertible. Retune in MIT_V2. | N·m/rad / N·m·s/rad |
+| Command effort | Firmware-internal units; not convertible. Retune in MIT_V2. | N·m |
+| Effort feedback | A | Joint torque estimate, N·m |
+| effort_limit | A | N·m, shared with Position |
 
-Normal completion disables the hand after the final command. An error or
-interrupt stops further commands and adds no recovery motion. Each example
-disables the connected hand, closes its publisher, disconnects the device,
-and closes the SDK. Runtime and cleanup errors return 1. Ctrl-C returns 130.
+MIT_V2 computes `torque = Kp * (q_des - q) + Kd * (dq_des - dq) + feed-forward`,
+then clamps the result to `effort_limit`. Its gains reset to 0 on reboot and
+must be explicitly set before enabling. Explicitly setting both gains to 0
+is allowed for feed-forward-only control. MIT_V2 and Position share the same
+N·m effort limit; changing it in either mode also affects the other.
+
+Before sending motion commands:
+
+1. Require all 20 joints online and disable them before switching modes.
+2. Select MIT_V2 and write explicit per-joint torque limits and physical Kp/Kd.
+3. Read back all 20 torque limits and gain pairs; stop if any is missing or different.
+4. Enable, wait until all 20 joints report Enabled, then publish commands.
+5. Stop publishing and disable before disconnecting.
+
+The examples provide fixed N·m limits and recommended tuning ranges.
+`ControlModeVec` is kept for compatibility; use `wuji_hand_2_set_control_mode` / `wuji_hand_2_get_control_mode` instead.
+
+MIT_V2 requires firmware 3.1.0 or later; with firmware 3.0.0, use MIT.
+Position mode's N·m effort limits require firmware 3.0.0 or later.
+Torque feedback is an estimate, not an external force-sensor measurement.
+
+The shared Position/MIT_V2 limits written by `2_publish` and
+`7_mit_sweep` remain after exit, disable or disconnect, including partial setup
+failures.
+
+Recorded joint-state `effort` is in A for MIT and in N·m for MIT_V2 and
+Position. Recordings include each joint's control mode; see the recording API
+reference before assigning units during replay.
+
+A mode change is rejected while background gain writes are pending. Wait for
+their completion before retrying; use synchronous gain writes when completion
+must be known before switching modes.
+
+Use `--sn <SN>` with `2_publish` and `7_mit_sweep` to select an exact
+device. An unmatched serial number fails without falling back to another hand.
 
 ## License
 
-[MIT](https://github.com/wuji-technology/wuji-sdk/blob/main/LICENSE)
+[MIT](../../LICENSE)

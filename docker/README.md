@@ -70,12 +70,12 @@ PY
 Run a read-only example in the container shell:
 
 ```bash
-python /examples/wuji_hand_2/0.subscribe_callback.py
+python /examples/wuji_hand_2/1_subscribe_callback.py
 # Or, for a Wuji Glove:
-python /examples/wuji_glove/0.subscribe_callback.py
+python /examples/wuji_glove/1_subscribe_callback.py
 ```
 
-To run an application without a shell, append its command to the same `docker run` options, for example `wuji-sdk:local python /examples/wuji_hand_2/0.subscribe_callback.py`. Mount application code read-only, and store output in a separate writable mount.
+To run an application without a shell, append its command to the same `docker run` options, for example `wuji-sdk:local python /examples/wuji_hand_2/1_subscribe_callback.py`. Mount application code read-only, and store output in a separate writable mount.
 
 ## USB Devices
 
@@ -124,9 +124,9 @@ Check the user and run the read-only hand example in the container shell:
 
 ```bash
 id
-python /examples/wuji_hand/0.subscribe.py
+python /examples/wuji_hand/0_subscribe.py
 # With a tactile glove attached:
-python /examples/wuji_hand/3.tactile_status.py
+python /examples/wuji_hand/3_tactile_status.py
 ```
 
 ## Troubleshooting

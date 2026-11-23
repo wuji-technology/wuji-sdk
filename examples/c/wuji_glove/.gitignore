@@ -1,3 +1,15 @@
 build/
-0_subscribe_callback
-1_set_stream_rate
+0_connect
+1_subscribe_callback
+2_recording
+3_offline_pipeline
+4_user
+5_calibration
+6_set_stream_rate
+7_tactile_calibration
+8_tactile_contact_view
+9_tactile_residual_view
+10_set_hand_model_path
+11_time_sync
+12_network_config
+13_reboot

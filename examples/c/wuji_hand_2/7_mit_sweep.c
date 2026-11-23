@@ -1,422 +1,334 @@
+/*
+ * Purpose:
+ *   Publish a cosine sweep in MIT_V2 mode.
+ * Prerequisites:
+ *   Install the C SDK. All 20 joints must be online. Keep the hand clear of
+ *   people and objects; this example moves every joint.
+ * Usage:
+ *   Build with CMake as described in ../README.md, selecting target 7_mit_sweep.
+ *   ./build/7_mit_sweep
+ *   ./build/7_mit_sweep --sn DEVICE_SN
+ * Expected Behavior:
+ *   Disable, select MIT_V2 mode, set physical gains and per-joint torque limits,
+ *   then enable. Ramp to zero in 1 second at 1 kHz, then move joint 0 to
+ *   0.02 rad and back with 101 commands at 50 Hz. Other joints stay at zero. Disable and disconnect on completion, error, or Ctrl-C.
+ *   Exit 0 on completion or Ctrl-C, 1 on execution or cleanup failure,
+ *   and 2 on invalid arguments. Errors go to stderr.
+ * Documentation:
+ *   https://docs.wuji.tech/docs/en/wuji-hand/latest/sdk-practice/mit-sweep
+ */
+
 #define _POSIX_C_SOURCE 200809L
 
-/* Wuji SDK C - fixed 101-command cosine sweep on Hand 2 joint 0. */
+#include "wuji_sdk.h"
 
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
 #include <stdatomic.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
-#include "wuji_sdk.h"
+#define JOINT_COUNT WUJI_HAND_2_JOINT_COUNT
+#define PUB_HZ 50
+#define RAMP_HZ 1000
+#define AMPLITUDE 0.02f
+#define SWEEP_STEPS 100
+// MIT_V2 starting gains: Kp 0.5..2.0 N*m/rad, Kd 0.01..0.05 N*m*s/rad.
+// Retune for the joint and load; these are recommendations, not device limits.
+#define KP 1.0f
+#define KD 0.02f
+static const float TORQUE_LIMITS_NM[JOINT_COUNT] = {
+    0.25f, 0.15f, 0.12f, 0.08f,
+    0.25f, 0.08f, 0.08f, 0.08f,
+    0.25f, 0.08f, 0.08f, 0.08f,
+    0.25f, 0.08f, 0.08f, 0.08f,
+    0.25f, 0.08f, 0.08f, 0.08f,
+};
 
-#define JOINT_COUNT 20u
-#define AMPLITUDE_RAD 0.02f
-#define SWEEP_INTERVALS 100u
-#define COMMAND_INTERVAL_NS 20000000L
-#define RAMP_DURATION_NS 1000000000L
-#define RAMP_INTERVAL_NS 1000000L
-#define RAMP_STEPS (RAMP_DURATION_NS / RAMP_INTERVAL_NS)
-#define CAPTURE_ATTEMPTS 400u
-#define CAPTURE_WAIT_NS 5000000L
-#define PI_VALUE 3.14159265358979323846
-
-static volatile sig_atomic_t g_stop = 0;
-
-/* Request cooperative cleanup after Ctrl+C. */
-static void on_sigint(int signal_number) {
-    (void)signal_number;
-    g_stop = 1;
-}
-
-/* Sleep for one command interval, in nanoseconds. */
-static int sleep_ns(long interval_ns) {
-    struct timespec duration = {0, interval_ns};
-    while (nanosleep(&duration, &duration) != 0) {
-        if (errno != EINTR || g_stop) return -1;
+static int verify_mit_v2_parameters(struct WujiDevice *hand) {
+    float limits[JOINT_COUNT], kp[JOINT_COUNT], kd[JOINT_COUNT];
+    const uint32_t all_online = (UINT32_C(1) << JOINT_COUNT) - 1u;
+    uint32_t limit_online = 0, gain_online = 0;
+    if (wuji_hand_2_get_all_effort_limit(hand, limits, &limit_online) != WUJI_STATUS_OK
+        || wuji_hand_2_get_all_mit_params(hand, kp, kd, &gain_online) != WUJI_STATUS_OK) {
+        fprintf(stderr, "read MIT_V2 parameters: %s\n", wuji_last_error());
+        return 0;
     }
-    return 0;
-}
-
-/* Scan, keep only Wuji Hand 2 devices, and connect the one the operator
- * selects. Every eligible serial number is listed; when several hands are on
- * the network, the operator picks one by number. Enter - or a closed stdin,
- * as in a piped run - selects the first. Returns 0 on success, -1 on failure
- * (a diagnostic is printed), and -2 when the operator stops at the prompt. */
-static int connect_hand(struct WujiDevice **out_hand) {
-    struct WujiDiscovered *devices = NULL;
-    struct WujiConnectTarget target = {0};
-    struct WujiDevice *hand = NULL;
-    size_t count = 0u;
-    size_t hands = 0u;
-    size_t choice = 0u;
-    size_t candidate = 0u;
-    size_t i;
-    WujiStatus status;
-
-    status = wuji_scan(&devices, &count);
-    if (status != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: scan failed: %s\n", wuji_last_error());
-        wuji_discovered_free(devices, count);
-        return -1;
+    if (limit_online != all_online || gain_online != all_online) {
+        fprintf(stderr, "MIT_V2 requires %d readable parameter entries\n", JOINT_COUNT);
+        return 0;
     }
-    if (count == 0u) {
-        fprintf(stderr,
-                "error: no device found; check that the device is powered on "
-                "and reachable on the network\n");
-        wuji_discovered_free(devices, count);
-        return -1;
-    }
-    printf("Found %zu device(s)\n", count);
-    for (i = 0u; i < count; ++i) {
-        printf("  SN=%s  Type=%s  Address=%s\n", devices[i].serial_number,
-               devices[i].model, devices[i].address);
-        if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) ++hands;
-    }
-    if (hands == 0u) {
-        fprintf(stderr,
-                "error: no Wuji Hand 2 found among the scanned devices\n");
-        wuji_discovered_free(devices, count);
-        return -1;
-    }
-    if (hands > 1u) {
-        candidate = 0u;
-        printf("Wuji Hand 2 devices:\n");
-        for (i = 0u; i < count; ++i) {
-            if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
-                printf("  [%zu] SN=%s  Address=%s\n", candidate,
-                       devices[i].serial_number, devices[i].address);
-                ++candidate;
-            }
-        }
-        for (;;) {
-            printf("Select Wuji Hand 2 to connect [0-%zu], Enter picks 0: ",
-                   hands - 1u);
-            fflush(stdout);
-
-            char line[128];
-            if (!fgets(line, sizeof(line), stdin)) {
-                if (g_stop) {
-                    printf("\n");
-                    wuji_discovered_free(devices, count);
-                    return -2;
-                }
-                printf("\nNo terminal input available - connecting the first "
-                       "Wuji Hand 2.\n");
-                break;
-            }
-            if (g_stop) {
-                printf("\n");
-                wuji_discovered_free(devices, count);
-                return -2;
-            }
-            char *s = line;
-            while (*s == ' ' || *s == '\t') s++;
-            char *end = s + strlen(s);
-            while (end > s && (end[-1] == '\n' || end[-1] == '\r' ||
-                               end[-1] == ' ' || end[-1] == '\t'))
-                *--end = '\0';
-            if (*s == '\0') break; /* Enter selects the first candidate */
-
-            char *stop = NULL;
-            long value = strtol(s, &stop, 10);
-            /* strtol also parses negatives, which would index past the end. */
-            if (*stop != '\0' || value < 0 || (size_t)value >= hands) {
-                printf("Invalid selection: '%s'\n", s);
-                continue;
-            }
-            choice = (size_t)value;
-            break;
+    for (int i = 0; i < JOINT_COUNT; ++i) {
+        if (!isfinite(limits[i]) || !isfinite(kp[i]) || !isfinite(kd[i])
+            || fabsf(limits[i] - TORQUE_LIMITS_NM[i]) > 1e-5f
+            || fabsf(kp[i] - KP) > 1e-5f || fabsf(kd[i] - KD) > 1e-5f) {
+            fprintf(stderr, "MIT_V2 parameter mismatch at joint %d\n", i);
+            return 0;
         }
     }
-    if (g_stop) {
-        wuji_discovered_free(devices, count);
-        return -2;
-    }
-    /* Map the chosen candidate ordinal back into devices[] order. */
-    candidate = 0u;
-    for (i = 0u; i < count; ++i) {
-        if (devices[i].device_id == WUJI_DEVICE_TYPE_WUJI_HAND_2) {
-            if (candidate == choice) break;
-            ++candidate;
-        }
-    }
-    if (i == count) { /* unreachable: hands > 0 and choice < hands */
-        wuji_discovered_free(devices, count);
-        return -1;
-    }
-    target.kind = WUJI_CONNECT_TARGET_KIND_SN;
-    target.value = devices[i].serial_number;
-    printf("Connecting Wuji Hand 2: SN=%s  Address=%s\n",
-           devices[i].serial_number, devices[i].address);
-    status = wuji_connect(&target, "hand_2_mit_sweep", NULL, &hand);
-    wuji_discovered_free(devices, count);
-    if (status != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: connect failed: %s\n", wuji_last_error());
-        return -1;
-    }
-    *out_hand = hand;
-    return 0;
+    return 1;
 }
 
-/* Build one command in the fixed joint-0 cosine sequence. */
-static void generate_command(
-    size_t frame_index,
-    struct WujiJointCommand commands[JOINT_COUNT]) {
-    const double phase =
-        2.0 * PI_VALUE * (double)frame_index / (double)SWEEP_INTERVALS;
-    size_t index;
+static volatile sig_atomic_t stop_requested = 0;
 
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        commands[index].position = 0.0f;
-        commands[index].velocity = 0.0f;
-        commands[index].effort = 0.0f;
-    }
-    commands[0].position =
-        AMPLITUDE_RAD * 0.5f * (float)(1.0 - cos(phase));
+static void on_sigint(int signum) {
+    (void)signum;
+    stop_requested = 1;
 }
 
-/* Send the fixed sequence with a 20 ms command interval. */
-static int send_sweep(struct WujiJointCommandPublisher *publisher) {
-    struct WujiJointCommand commands[JOINT_COUNT];
-    size_t frame_index;
-
-    for (frame_index = 0u; frame_index <= SWEEP_INTERVALS; ++frame_index) {
-        if (g_stop) return -2;
-        generate_command(frame_index, commands);
-        if (wuji_joint_command_publisher_send(publisher, commands)
-            != WUJI_STATUS_OK) {
-            return -1;
-        }
-        if (frame_index < SWEEP_INTERVALS && sleep_ns(COMMAND_INTERVAL_NS) != 0) {
-            return g_stop ? -2 : -1;
-        }
-    }
-    return 0;
+static void report_sdk_error(const char *operation) {
+    const char *error = wuji_last_error();
+    fprintf(stderr, "%s failed: %s\n", operation, error ? error : "Unknown SDK error");
 }
 
-/* Capture state: the worker thread fills flat-20 positions and sets ready. */
+static WujiStatus connect_device(const char *sn, WujiDevice **device) {
+    if (sn != NULL) {
+        WujiConnectTarget target = {.kind = WUJI_CONNECT_TARGET_KIND_SN, .value = sn};
+        return wuji_connect(&target, "example", NULL, device);
+    }
+    return wuji_auto_connect("example", device);
+}
+
+static void sleep_seconds(double seconds) {
+    struct timespec duration = {
+        .tv_sec = (time_t)seconds,
+        .tv_nsec = (long)((seconds - (time_t)seconds) * 1000000000.0)
+    };
+    nanosleep(&duration, NULL);
+}
+
+static double now_seconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
+}
+
 typedef struct {
-    _Atomic int ready;
+    atomic_int ready;
+    atomic_int failed;
+    atomic_int closing;
     float positions[JOINT_COUNT];
-} capture_ctx_t;
+} Feedback;
 
-/* Scatter one frame into flat-20 command order via the SDK nid mapping.
- * Reject frames that do not carry exactly the 20 joint nids — a tactile-slot
- * or out-of-range nid fails wuji_hand_2_nid_to_joint_index, and a duplicate
- * or missing joint leaves the seen-mask incomplete. */
-static int frame_to_positions(const WujiJointStateFrame *frame,
-                              float positions[JOINT_COUNT]) {
-    uint32_t seen = 0u;
-    size_t index;
+static int frame_ok(WujiFrameKind kind, const void *frame, Feedback *feedback) {
+    if (kind == WUJI_FRAME_KIND_END && atomic_load(&feedback->closing)) return 0;
+    if (kind == WUJI_FRAME_KIND_LAG) {
+        const char *error = wuji_last_error();
+        fprintf(stderr, "Warning: %s\n", error ? error : "subscription frames were dropped");
+        return 0;
+    }
+    if (kind == WUJI_FRAME_KIND_OK && frame != NULL) return 1;
+    const char *error = wuji_last_error();
+    fprintf(stderr, "feedback stream failed (%d): %s\n", kind,
+            error ? error : "stream ended or data was lost");
+    atomic_store(&feedback->failed, 1);
+    return 0;
+}
 
-    if (frame->joints_len != JOINT_COUNT) return -1;
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        uint8_t joint_index = 0u;
-        if (wuji_hand_2_nid_to_joint_index(frame->joints[index].nid,
-                                           &joint_index)
-                != WUJI_STATUS_OK) {
-            return -1;
+static void on_diagnostics(WujiFrameKind kind, const WujiJointDiagnosticsFrame *frame, void *data) {
+    Feedback *feedback = data;
+    if (!frame_ok(kind, frame, feedback)) return;
+    atomic_store(&feedback->ready, 0);
+    if (frame->joints_len != JOINT_COUNT) return;
+    for (size_t i = 0; i < frame->joints_len; ++i) {
+        WujiJointStatus status;
+        if (wuji_hand_2_decode_joint_status(frame->joints[i].status_word, &status) != WUJI_STATUS_OK) {
+            report_sdk_error("wuji_hand_2_decode_joint_status");
+            atomic_store(&feedback->failed, 1);
+            return;
         }
-        if (seen & (1u << joint_index)) return -1;
-        seen |= 1u << joint_index;
-        positions[joint_index] = frame->joints[index].position;
+        if (!status.enabled) return;
     }
-    return seen == ((1u << JOINT_COUNT) - 1u) ? 0 : -1;
+    atomic_store(&feedback->ready, 1);
 }
 
-/* Record one complete joint_states frame into the capture context. */
-static void on_capture_frame(WujiFrameKind kind,
-                             const WujiJointStateFrame *frame,
-                             void *user_data) {
-    capture_ctx_t *ctx = (capture_ctx_t *)user_data;
-
-    if (kind != WUJI_FRAME_KIND_OK || frame == NULL) return;
-    if (frame_to_positions(frame, ctx->positions) == 0) {
-        atomic_store_explicit(&ctx->ready, 1, memory_order_release);
-    }
-}
-
-/* Wait for one complete joint_states frame; -1 timeout, -2 stop, -3 subscribe. */
-static int capture_start_positions(struct WujiDevice *hand,
-                                   float start[JOINT_COUNT]) {
-    capture_ctx_t ctx;
-    struct WujiSub *subscription = NULL;
-    struct timespec wait = {0, CAPTURE_WAIT_NS};
-    size_t attempt;
-    int captured;
-
-    memset(&ctx, 0, sizeof(ctx));
-    if (wuji_hand_2_subscribe_joint_states(hand, on_capture_frame, &ctx,
-                                           &subscription)
-        != WUJI_STATUS_OK) {
-        return -3;
-    }
-    for (attempt = 0u; attempt < CAPTURE_ATTEMPTS && !g_stop; ++attempt) {
-        if (atomic_load_explicit(&ctx.ready, memory_order_acquire)) break;
-        nanosleep(&wait, NULL);
-    }
-    wuji_sub_close(subscription);
-    if (g_stop) return -2;
-    captured = atomic_load_explicit(&ctx.ready, memory_order_acquire);
-    if (captured) memcpy(start, ctx.positions, sizeof(ctx.positions));
-    return captured ? 0 : -1;
-}
-
-/* Blend one command between start and target by a 0..1 ratio. */
-static void blend_command(const float start[JOINT_COUNT],
-                          const float target[JOINT_COUNT],
-                          double ratio,
-                          struct WujiJointCommand commands[JOINT_COUNT]) {
-    size_t index;
-
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        commands[index].position =
-            start[index] + (target[index] - start[index]) * (float)ratio;
-        commands[index].velocity = 0.0f;
-        commands[index].effort = 0.0f;
-    }
-}
-
-/* Ease from the captured pose to the opening frame with a cosine profile. */
-static int send_ramp(struct WujiJointCommandPublisher *publisher,
-                     const float start[JOINT_COUNT]) {
-    struct WujiJointCommand target_commands[JOINT_COUNT];
-    struct WujiJointCommand commands[JOINT_COUNT];
-    float target[JOINT_COUNT];
-    size_t index;
-    size_t step;
-
-    generate_command(0u, target_commands);
-    for (index = 0u; index < JOINT_COUNT; ++index) {
-        target[index] = target_commands[index].position;
-    }
-    for (step = 1u; step <= RAMP_STEPS; ++step) {
-        const double ratio =
-            0.5 * (1.0 - cos(PI_VALUE * (double)step / (double)RAMP_STEPS));
-        if (g_stop) return -2;
-        blend_command(start, target, ratio, commands);
-        if (wuji_joint_command_publisher_send(publisher, commands)
-            != WUJI_STATUS_OK) {
-            return -1;
+static void on_positions(WujiFrameKind kind, const WujiJointStateFrame *frame, void *data) {
+    Feedback *feedback = data;
+    if (!frame_ok(kind, frame, feedback) || atomic_load(&feedback->ready)) return;
+    if (frame->joints_len != JOINT_COUNT) return;
+    unsigned seen = 0;
+    for (size_t i = 0; i < frame->joints_len; ++i) {
+        uint8_t index;
+        if (wuji_hand_2_nid_to_joint_index(frame->joints[i].nid, &index) != WUJI_STATUS_OK) {
+            report_sdk_error("wuji_hand_2_nid_to_joint_index");
+            atomic_store(&feedback->failed, 1);
+            return;
         }
-        if (step < RAMP_STEPS && sleep_ns(RAMP_INTERVAL_NS) != 0) {
-            return g_stop ? -2 : -1;
+        if ((seen & (1u << index)) || !isfinite(frame->joints[i].position)) {
+            fprintf(stderr, "Error: duplicate joint or invalid position in joint_states\n");
+            atomic_store(&feedback->failed, 1);
+            return;
         }
+        seen |= 1u << index;
+        feedback->positions[index] = frame->joints[i].position;
+    }
+    atomic_store(&feedback->ready, 1);
+}
+
+static int wait_feedback(WujiSub *sub, Feedback *feedback, const char *expected) {
+    double deadline = now_seconds() + 5.0;
+    while (!stop_requested && !atomic_load(&feedback->ready) &&
+           !atomic_load(&feedback->failed) && now_seconds() < deadline) {
+        sleep_seconds(0.01);
+    }
+    atomic_store(&feedback->closing, 1);
+    wuji_sub_close(sub);
+    if (atomic_load(&feedback->failed)) return 1;
+    if (stop_requested) return 0;
+    if (!atomic_load(&feedback->ready)) {
+        fprintf(stderr, "Error: timed out waiting for %s\n", expected);
+        return 1;
     }
     return 0;
 }
 
-/* Connect, check 20 online joints, enable, send, and clean up. */
-static int run_device(void) {
-    struct WujiInitOptions init_options = {.log_level = 0};
-    struct WujiDevice *hand = NULL;
-    struct WujiJointCommandPublisher *publisher = NULL;
-    uint8_t online = 0u;
-    int initialized = 0;
-    int cleanup_failed = 0;
-    int exit_code = 1;
-    int send_result;
-    int select_result;
-    float start[JOINT_COUNT];
+static int wait_enabled(WujiDevice *device) {
+    Feedback feedback = {0};
+    WujiSub *sub = NULL;
+    if (wuji_hand_2_subscribe_joint_diagnostics(device, on_diagnostics, &feedback, &sub) != WUJI_STATUS_OK) {
+        report_sdk_error("wuji_hand_2_subscribe_joint_diagnostics");
+        return 1;
+    }
+    return wait_feedback(sub, &feedback, "all joints enabled");
+}
 
-    if (wuji_init(&init_options) != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: wuji_init failed: %s\n", wuji_last_error());
+static int read_positions(WujiDevice *device, float *positions) {
+    Feedback feedback = {0};
+    WujiSub *sub = NULL;
+    if (wuji_hand_2_subscribe_joint_states(device, on_positions, &feedback, &sub) != WUJI_STATUS_OK) {
+        report_sdk_error("wuji_hand_2_subscribe_joint_states");
+        return 1;
+    }
+    int result = wait_feedback(sub, &feedback, "positions from all 20 joints");
+    if (result == 0 && !stop_requested) memcpy(positions, feedback.positions, sizeof(feedback.positions));
+    return result;
+}
+
+#define CHECK(call) do { \
+    if ((call) != WUJI_STATUS_OK) { \
+        report_sdk_error(#call); \
+        result = 1; \
+        goto cleanup; \
+    } \
+} while (0)
+
+int main(int argc, char **argv) {
+    const char *sn = NULL;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--sn") == 0 && i + 1 < argc && argv[i + 1][0] != '-') {
+            sn = argv[++i];
+        } else if (strncmp(argv[i], "--sn=", 5) == 0) {
+            sn = argv[i] + 5;
+        } else {
+            fprintf(stderr, "Invalid arguments. Usage: %s [--sn DEVICE_SN]\n", argv[0]);
+            return 2;
+        }
+        if (strspn(sn, " \t\r\n") == strlen(sn)) {
+            fprintf(stderr, "--sn must not be empty\n");
+            return 2;
+        }
+    }
+
+    if (signal(SIGINT, on_sigint) == SIG_ERR) {
+        fprintf(stderr, "install Ctrl-C handler failed: %s\n", strerror(errno));
+        return 1;
+    }
+
+    int result = 0;
+    int hand_checked = 0;
+    WujiDevice *device = NULL;
+    WujiJointCommandPublisher *publisher = NULL;
+    if (wuji_init(NULL) != WUJI_STATUS_OK) {
+        report_sdk_error("wuji_init");
+        return 1;
+    }
+    if (stop_requested) goto cleanup;
+    CHECK(connect_device(sn, &device));
+    if (stop_requested) goto cleanup;
+    WujiDeviceType device_type;
+    if (wuji_dev_device_type(device, &device_type) != WUJI_STATUS_OK) {
+        report_sdk_error("wuji_dev_device_type");
+        result = 1;
         goto cleanup;
     }
-    initialized = 1;
-    select_result = connect_hand(&hand);
-    if (select_result == -2) {
-        exit_code = 130;
+    if (device_type != WUJI_DEVICE_TYPE_WUJI_HAND_2) {
+        fprintf(stderr, "Error: expected Wuji Hand 2, got device type %d\n", (int)device_type);
+        result = 1;
         goto cleanup;
     }
-    if (select_result != 0) goto cleanup;
-    if (wuji_hand_2_online_joints_count(hand, &online) != WUJI_STATUS_OK
-        || online != JOINT_COUNT) {
-        fprintf(stderr, "error: Hand 2 requires 20/20 online joints\n");
+    char serial_number[64];
+    if (wuji_dev_serial_number(device, serial_number, sizeof(serial_number)) < 0) {
+        report_sdk_error("wuji_dev_serial_number");
+        result = 1;
         goto cleanup;
     }
-    /* The hand keeps the control mode last set until it restarts; switch the whole hand to MIT. */
-    if (wuji_hand_2_set_control_mode(hand, WUJI_CONTROL_MODE_MIT) != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: switch to MIT mode failed: %s\n", wuji_last_error());
+    if (sn != NULL && strcmp(serial_number, sn) != 0) {
+        fprintf(stderr, "connected serial number differs from --sn\n");
+        result = 1;
         goto cleanup;
     }
-    if (wuji_hand_2_enable(hand, NULL) != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: enable failed: %s\n", wuji_last_error());
+    hand_checked = 1;
+    uint8_t online = 0;
+    CHECK(wuji_hand_2_online_joints_count(device, &online));
+    if (online != JOINT_COUNT) {
+        fprintf(stderr, "MIT_V2 requires 20/20 online joints\n");
+        result = 1;
         goto cleanup;
     }
-    if (wuji_hand_2_joint_command_publish(hand, &publisher)
-        != WUJI_STATUS_OK) {
-        fprintf(stderr, "error: create publisher failed: %s\n",
-                wuji_last_error());
-        goto cleanup;
+    printf("Connected: %s\n", serial_number);
+    // Disable joints before switching control mode.
+    CHECK(wuji_hand_2_disable(device, NULL));
+    if (stop_requested) goto cleanup;
+    CHECK(wuji_hand_2_set_control_mode(device, WUJI_CONTROL_MODE_MIT_V2));
+    float kp[JOINT_COUNT], kd[JOINT_COUNT];
+    for (int i = 0; i < JOINT_COUNT; ++i) { kp[i] = KP; kd[i] = KD; }
+    CHECK(wuji_hand_2_set_all_mit_params(device, kp, kd));
+    CHECK(wuji_hand_2_set_all_effort_limit_per_joint(device, TORQUE_LIMITS_NM));
+    if (stop_requested) goto cleanup;
+    if (!verify_mit_v2_parameters(device)) { result = 1; goto cleanup; }
+    if (stop_requested) goto cleanup;
+    CHECK(wuji_hand_2_enable(device, NULL));
+    result = wait_enabled(device);
+    if (result || stop_requested) goto cleanup;
+    float start[JOINT_COUNT];
+    result = read_positions(device, start);
+    if (result || stop_requested) goto cleanup;
+    CHECK(wuji_hand_2_joint_command_publish(device, &publisher));
+    double started = now_seconds();
+    for (int step = 1; step <= RAMP_HZ && !stop_requested; ++step) {
+        float scale = (float)(0.5 * (1.0 + cos(3.141592653589793 * step / RAMP_HZ)));
+        WujiJointCommand commands[JOINT_COUNT] = {{0}};
+        for (int i = 0; i < JOINT_COUNT; ++i) commands[i].position = start[i] * scale;
+        CHECK(wuji_joint_command_publisher_send(publisher, commands));
+        double wait = started + (double)step / RAMP_HZ - now_seconds();
+        if (wait > 0) sleep_seconds(wait);
     }
-    send_result = capture_start_positions(hand, start);
-    if (send_result == -2) {
-        exit_code = 130;
-        goto cleanup;
-    }
-    if (send_result == -3) {
-        fprintf(stderr, "error: subscribe joint_states failed: %s\n",
-                wuji_last_error());
-        goto cleanup;
-    }
-    if (send_result != 0) {
-        fprintf(stderr, "error: no complete joint_states frame to ramp from\n");
-        goto cleanup;
-    }
-    send_result = send_ramp(publisher, start);
-    if (send_result == -1) {
-        fprintf(stderr, "error: send ramp failed: %s\n", wuji_last_error());
-        goto cleanup;
-    }
-    if (send_result == 0) send_result = send_sweep(publisher);
-    if (send_result == -2) {
-        exit_code = 130;
-    } else if (send_result == 0) {
-        exit_code = 0;
-    } else {
-        fprintf(stderr, "error: send sweep failed: %s\n", wuji_last_error());
+    started = now_seconds();
+    for (int step = 0; step <= SWEEP_STEPS && !stop_requested; ++step) {
+        WujiJointCommand commands[JOINT_COUNT] = {{0}};
+        commands[0].position = (float)(AMPLITUDE * 0.5 *
+            (1.0 - cos(2.0 * 3.141592653589793 * step / SWEEP_STEPS)));
+        CHECK(wuji_joint_command_publisher_send(publisher, commands));
+        double wait = started + (double)(step + 1) / PUB_HZ - now_seconds();
+        if (step < SWEEP_STEPS && wait > 0) sleep_seconds(wait);
     }
 
 cleanup:
-    if (hand != NULL && wuji_hand_2_disable(hand, NULL) != WUJI_STATUS_OK) {
-        cleanup_failed = 1;
+    if (publisher != NULL) wuji_joint_command_publisher_close(publisher);
+    if (hand_checked && wuji_hand_2_disable(device, NULL) != WUJI_STATUS_OK) {
+        report_sdk_error("wuji_hand_2_disable");
+        result = 1;
     }
-    wuji_joint_command_publisher_close(publisher);
-    if (hand != NULL) {
-        if (wuji_dev_disconnect(hand) != WUJI_STATUS_OK) cleanup_failed = 1;
-        wuji_dev_release(hand);
+    if (device != NULL) {
+        if (wuji_dev_disconnect(device) != WUJI_STATUS_OK) {
+            report_sdk_error("wuji_dev_disconnect");
+            result = 1;
+        }
+        wuji_dev_release(device);
     }
-    if (initialized) wuji_shutdown();
-    if (exit_code == 0 && cleanup_failed) exit_code = 1;
-    if (cleanup_failed) {
-        fprintf(stderr, "cleanup error: disable or disconnect failed\n");
-    }
-    return exit_code;
-}
-
-/* Run the fixed physical-device transaction. */
-int main(void) {
-    /* sa_flags = 0 (no SA_RESTART) so SIGINT interrupts the blocking fgets()
-     * in the device prompt with EINTR instead of restarting it. signal()
-     * gives no such guarantee: glibc takes its semantics from the
-     * feature-test macros, and musl and bionic always set SA_RESTART. */
-    struct sigaction sigint_action;
-
-    g_stop = 0;
-    memset(&sigint_action, 0, sizeof(sigint_action));
-    sigint_action.sa_handler = on_sigint;
-    sigemptyset(&sigint_action.sa_mask);
-    sigint_action.sa_flags = 0;
-    if (sigaction(SIGINT, &sigint_action, NULL) != 0) {
-        fprintf(stderr, "error: sigaction(SIGINT) failed\n");
-        return 1;
-    }
-    return run_device();
+    wuji_shutdown();
+    return result;
 }

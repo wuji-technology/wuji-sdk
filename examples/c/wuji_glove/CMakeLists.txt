@@ -86,9 +86,15 @@ function(wuji_sdk_finish_target target)
     endif()
 endfunction()
 
-set(demos 0_subscribe_callback)
+set(demos 0_connect 1_subscribe_callback 2_recording)
 if(NOT WIN32)
-    list(APPEND demos 1_set_stream_rate 2_set_hand_model_path 3_user_management 4_user_calibration 5_tactile_calibration 6_tactile_contact_view 7_tactile_residual_view 8_offline_pipeline)
+    find_package(Threads REQUIRED)
+    list(APPEND demos 3_offline_pipeline 4_user 5_calibration
+        6_set_stream_rate 7_tactile_calibration 8_tactile_contact_view
+        9_tactile_residual_view 10_set_hand_model_path
+        11_time_sync
+        12_network_config
+        13_reboot)
 endif()
 
 foreach(demo IN LISTS demos)
@@ -96,6 +102,20 @@ foreach(demo IN LISTS demos)
     target_include_directories(${demo} PRIVATE "${WUJI_SDK_INCLUDE_DIR}")
     wuji_sdk_finish_target(${demo})
 endforeach()
+
+if(MSVC)
+    target_compile_options(1_subscribe_callback PRIVATE /experimental:c11atomics)
+    target_compile_options(2_recording PRIVATE /experimental:c11atomics)
+endif()
+
+if(WIN32)
+    target_link_libraries(2_recording PRIVATE shell32)
+else()
+    target_link_libraries(2_recording PRIVATE Threads::Threads)
+    if(NOT APPLE)
+        target_link_libraries(7_tactile_calibration PRIVATE m)
+    endif()
+endif()
 
 message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
 message(STATUS "WUJI_SDK_LIB         = ${WUJI_SDK_LIB}")

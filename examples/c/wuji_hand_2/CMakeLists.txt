@@ -82,16 +82,20 @@ function(wuji_sdk_finish_target target)
     endif()
 endfunction()
 
-set(demos 0_subscribe_joint_states)
+set(demos 0_connect 1_subscribe_callback 9_recording)
 if(NOT WIN32)
     find_package(Threads REQUIRED)
     list(APPEND demos
-        1_control_motion
-        2_hand_info
-        3_fingertip
+        2_publish
+        3_hand_info
         4_set_stream_rate
         5_export_flash_logs
-        7_mit_sweep)
+        7_mit_sweep
+        8_position_mode
+        10_emergency_stop
+        11_clear_fault
+        12_network_config
+        13_reboot)
 endif()
 
 foreach(demo IN LISTS demos)
@@ -102,13 +106,20 @@ endforeach()
 
 if(NOT WIN32)
     add_subdirectory(6_opposition)
-    target_link_libraries(1_control_motion PRIVATE m Threads::Threads)
+    target_link_libraries(2_publish PRIVATE m Threads::Threads)
     target_link_libraries(7_mit_sweep PRIVATE m Threads::Threads)
-    target_link_libraries(3_fingertip PRIVATE m Threads::Threads)
+    target_link_libraries(8_position_mode PRIVATE m Threads::Threads)
+endif()
+
+if(WIN32)
+    target_link_libraries(9_recording PRIVATE shell32)
+else()
+    target_link_libraries(9_recording PRIVATE Threads::Threads)
 endif()
 
 if(MSVC)
-    target_compile_options(0_subscribe_joint_states PRIVATE /experimental:c11atomics)
+    target_compile_options(1_subscribe_callback PRIVATE /experimental:c11atomics)
+    target_compile_options(9_recording PRIVATE /experimental:c11atomics)
 endif()
 
 message(STATUS "WUJI_SDK_INCLUDE_DIR = ${WUJI_SDK_INCLUDE_DIR}")
